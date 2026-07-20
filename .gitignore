@@ -1,0 +1,67 @@
+# Operating-system artifacts
+.DS_Store
+Thumbs.db
+
+# Editor temporary and local project files
+*.swp
+*.swo
+*~
+.idea/
+.vscode/*.local.*
+
+# Environment-variable files
+.env
+.env.*
+!.env.example
+
+# Python bytecode and interpreter artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test, type-checking, linting, and tool caches
+.pytest_cache/
+.mypy_cache/
+.pyright/
+.ruff_cache/
+.tox/
+.nox/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Coverage and test output
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+/test-results/
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
+.eggs/
+wheels/
+pip-wheel-metadata/
+
+# Provisional Byte Core repository-local state
+/.byte-local/
+
+# Provisional root-level local configuration files
+/*.local.json
+/*.local.toml
+/*.local.yaml
+/*.local.yml
+
+# Private diagnostics and local reports
+/diagnostics/private/
+/reports/local/
+/logs/local/
+
+# Local credential-material directories
+/credentials/
+/secrets/
