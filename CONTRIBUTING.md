@@ -71,6 +71,44 @@ Do not claim success based only on implementation. Distinguish check, plan, appl
 
 The repository does not yet have a complete automated test or CI suite. Do not represent missing automation as completed validation.
 
+## Versioning, branches, and releases
+
+Byte Core uses [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) for release identifiers. Release versions have the form `MAJOR.MINOR.PATCH`, and Git tags add a leading `v`.
+
+While the major version is `0`, Byte Core is in initial development. Interfaces, behavior, documentation, and repository structure may change incompatibly. A pre-1.0 version does not promise stability, backward compatibility, production support, or a maintenance period.
+
+### Branches
+
+- `main` is the canonical integration branch.
+- The active repository ruleset prevents deletion and non-fast-forward updates to `main`.
+- The current bootstrap workflow permits reviewed, validated changes to reach `main` through normal fast-forward updates.
+- Optional `codex/*` branches are short-lived work branches. They do not represent releases or supported versions and should be removed after their reviewed changes are integrated or abandoned.
+- Byte Core does not currently define long-lived development, release, or maintenance branches.
+
+### Tags and GitHub releases
+
+- Release tags use the form `vMAJOR.MINOR.PATCH` and identify an exact reviewed commit on `main`.
+- A tag is created only after the stated milestone criteria have been reviewed and validation evidence has been recorded.
+- `v0.0.1` is the planned first bootstrap tag. It must not be created merely because the repository foundation exists; its approved milestone criteria must first be met.
+- A published tag must not be moved or reused. Corrections are made through new commits and, when appropriate, a later version.
+- A GitHub release may be created manually from an approved tag to summarize its contents and known limitations.
+- A GitHub release does not by itself imply package publication, compatibility, production support, or ongoing maintenance.
+
+Byte Core does not currently define CI-gated releases, release automation, package publication, artifact signing, a changelog process, or a support policy.
+
+### Validation and backout
+
+Before creating a tag or GitHub release:
+
+1. Confirm the worktree is clean and `main` is synchronized with `origin/main`.
+2. Resolve and record the exact commit to be tagged.
+3. Confirm the milestone criteria are satisfied.
+4. Run the applicable tests and repository checks that exist at that time.
+5. Complete a privacy and leakage review.
+6. Record the validation evidence and known limitations.
+
+Back out an incorrect repository change with a normal reviewed revert or follow-up commit. Do not rewrite `main` history or move a published tag. If a published version requires correction, document the problem and use a later version for the correction.
+
 ## Changes and review
 
 Explain:
