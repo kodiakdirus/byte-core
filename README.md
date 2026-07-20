@@ -4,7 +4,7 @@
 
 Byte Core is an independent community project exploring a safe, friendly, Codex-centered framework for homelab administration.
 
-The repository is currently establishing its public foundation, architecture, governance, and safety boundaries. No functional release or command-line interface exists yet. Installation and operational use are not currently supported.
+The repository has established its public foundation and initial configuration-ownership boundary. Broader architecture, governance, and safety work remains in progress. No functional release or command-line interface exists yet. Installation and operational use are not currently supported.
 
 ## Architectural rule
 
@@ -29,9 +29,11 @@ Ignored files remain private local state, not safe storage for secrets. Ignore r
 
 ## Current capabilities
 
-At this bootstrap stage, Byte Core provides only its public repository, Apache License 2.0 licensing, and an initial repository-security baseline.
+At this bootstrap stage, Byte Core provides its public repository foundation, Apache License 2.0 licensing, initial repository-security baseline, and a documented [configuration and ownership contract](docs/configuration.md). TOML 1.0 and Python 3.11 or newer are the initial configuration-format and runtime baseline.
 
-There is no functional Byte Core release, installer, lifecycle command, shell integration, configuration format, or validation tool yet.
+The repository also contains an internal, read-only layered configuration resolver and tests. This is an experimental implementation proof, not a stable public API or user-facing validation tool.
+
+There is no public CLI, installer, lifecycle command, shell integration, functional release, or supported operational deployment yet.
 
 ## Planned direction
 
