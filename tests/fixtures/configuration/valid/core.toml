@@ -1,0 +1,16 @@
+schema_version = 1
+
+[deployment]
+name = "example-lab"
+domain = "example.test"
+tags = ["core-default"]
+
+[selection]
+platform = "generic"
+host = "node-01.example"
+
+[paths]
+workspace = "workspace"
+
+[retention]
+cache_days = 7

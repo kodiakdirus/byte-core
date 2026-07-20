@@ -1,0 +1,4 @@
+schema_version = 1
+
+[retention]
+cache_days = "seven"

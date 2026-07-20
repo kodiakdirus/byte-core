@@ -1,0 +1,4 @@
+schema_version = 2
+
+[selection]
+host = "node-42.example"

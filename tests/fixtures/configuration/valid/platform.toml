@@ -1,0 +1,7 @@
+schema_version = 1
+
+[selection]
+platform = "example-platform"
+
+[retention]
+cache_days = 3

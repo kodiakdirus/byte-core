@@ -1,0 +1,7 @@
+schema_version = 1
+
+[deployment]
+tags = ["host"]
+
+[selection]
+host = "node-42.example"
