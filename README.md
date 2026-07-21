@@ -49,7 +49,7 @@ The current v0.1 direction includes:
 
 The first functional command is planned to be `byte check`. It is not implemented.
 
-The first bootstrap tag is planned to be `v0.0.1`. No release has been published.
+The first bootstrap release, [`v0.0.1`](https://github.com/kodiakdirus/byte-core/releases/tag/v0.0.1), is published as a pre-release with no release assets. It records the repository bootstrap and is not a functional Byte Core release.
 
 ## Non-goals for v0.1
 

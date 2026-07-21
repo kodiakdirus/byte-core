@@ -4,7 +4,7 @@ Byte Core separates reusable Core behavior from deployment-owned identity and tr
 
 > Byte Core owns behavior and structure; each homelab deployment owns identity and truth.
 
-This document defines ownership, configuration resolution, path semantics, updates, migrations, and privacy boundaries. It does not select final platform-specific installation paths or claim that configuration loading is implemented.
+This document defines ownership, configuration resolution, path semantics, updates, migrations, and privacy boundaries. An internal, read-only layered configuration resolver implements the current bootstrap contract, but it is not a stable public API or user-facing command. This document does not select final platform-specific installation paths.
 
 ## Configuration format and runtime
 
