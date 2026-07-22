@@ -204,6 +204,38 @@ def verify_initialization(plan: InitializationPlan) -> LifecycleResult:
     return LifecycleResult("verified", plan.plan_id, str(root))
 
 
+def remove_core_integration(
+    deployment_root: str | os.PathLike[str],
+) -> LifecycleResult:
+    """Verify preservation when no installed Core integration exists yet."""
+
+    root = _resolve_existing_root(deployment_root)
+    try:
+        configuration = tomllib.loads(
+            (root / "deployment.toml").read_text(encoding="utf-8")
+        )
+        if configuration.get("schema_version") != 1:
+            raise LifecycleError("verification_failed")
+        if not validate_canonical_documents(root).passed:
+            raise LifecycleError("verification_failed")
+    except LifecycleError:
+        raise
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise LifecycleError("verification_failed") from error
+
+    report_id = _digest(
+        _canonical_json(
+            {
+                "operation": "remove",
+                "deployment_root": str(root),
+                "removed": [],
+                "preserved": sorted(path.name for path in root.iterdir()),
+            }
+        ).encode("utf-8")
+    )
+    return LifecycleResult("core_integration_absent", report_id, str(root))
+
+
 def _parse_plan(raw: Any) -> InitializationPlan:
     if type(raw) is not dict or set(raw) != {
         "schema_version", "operation", "deployment_root", "files",
@@ -258,6 +290,21 @@ def _resolve_new_root(value: str | os.PathLike[str]) -> Path:
     except LifecycleError:
         raise
     except (OSError, RuntimeError, TypeError, ValueError) as error:
+        raise LifecycleError("invalid_target") from error
+
+
+def _resolve_existing_root(value: str | os.PathLike[str]) -> Path:
+    root = _resolve_new_root(value)
+    try:
+        if _is_link_like(root):
+            raise LifecycleError("target_link_forbidden")
+        resolved = root.resolve(strict=True)
+        if resolved != root or not root.is_dir():
+            raise LifecycleError("invalid_target")
+        return root
+    except LifecycleError:
+        raise
+    except (OSError, RuntimeError) as error:
         raise LifecycleError("invalid_target") from error
 
 

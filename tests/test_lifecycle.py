@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sys
 import tempfile
 import unittest
@@ -17,6 +18,7 @@ from byte_core.lifecycle import (  # noqa: E402
     apply_initialization,
     build_initialization_plan,
     load_plan,
+    remove_core_integration,
     serialize_plan,
     verify_initialization,
 )
@@ -161,6 +163,44 @@ class LifecycleTests(unittest.TestCase):
                 verify_initialization(plan)
 
         self.assertEqual(raised.exception.code, "verification_failed")
+
+    def test_remove_preserves_deployment_and_unrelated_content(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "deployment"
+            plan = build_initialization_plan(root)
+            apply_initialization(plan)
+            unrelated = root / "operator-notes.txt"
+            unrelated.write_text("deployment owned", encoding="utf-8")
+            before = self._tree_hashes(root)
+
+            result = remove_core_integration(root)
+
+            self.assertEqual(result.code, "core_integration_absent")
+            self.assertEqual(before, self._tree_hashes(root))
+
+    def test_remove_refuses_invalid_and_symlinked_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            missing = Path(temporary) / "missing"
+            with self.assertRaises(LifecycleError):
+                remove_core_integration(missing)
+
+            target = Path(temporary) / "target"
+            target.mkdir()
+            link = Path(temporary) / "deployment"
+            try:
+                link.symlink_to(target.name, target_is_directory=True)
+            except (NotImplementedError, OSError):
+                return
+            with self.assertRaises(LifecycleError) as raised:
+                remove_core_integration(link)
+            self.assertEqual(raised.exception.code, "target_link_forbidden")
+
+    def _tree_hashes(self, root: Path) -> dict[str, str]:
+        return {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(root.iterdir())
+            if path.is_file()
+        }
 
 
 if __name__ == "__main__":
