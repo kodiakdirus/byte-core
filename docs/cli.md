@@ -71,6 +71,8 @@ A supported check returns status 0. A recognized but currently unsupported envir
 
 The [v0.1 support matrix](support-matrix.md) records the exact operating-system, architecture, runtime, shell, automated-evidence, and manual-evidence boundary. A recognized operating system is not sufficient by itself to claim host support.
 
+Zsh and shell enhancements are optional on Linux and are not environment-check prerequisites. Byte does not install a shell or modify shell profiles as part of `check`, installation, or initialization.
+
 ## Initialization lifecycle
 
 `byte plan init` is read-only and emits a deterministic JSON plan to standard output. The operator may redirect that output to a private local plan file. A plan binds its schema, operation, absolute deployment root, exact relative targets, expected SHA-256 content digests, preconditions, postconditions, backout actions, and plan ID.
