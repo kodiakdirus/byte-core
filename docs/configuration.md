@@ -2,7 +2,7 @@
 
 Byte Core separates reusable Core behavior from deployment-owned identity and truth.
 
-> Byte Core owns behavior and structure; each homelab deployment owns identity and truth.
+> Byte Core owns behavior and structure; each deployment owns identity and truth.
 
 This document defines ownership, configuration resolution, path semantics, updates, migrations, and privacy boundaries. An internal, read-only layered configuration resolver implements the current bootstrap contract, but it is not a stable public API or user-facing command. This document does not select final platform-specific installation paths.
 
@@ -62,7 +62,7 @@ Ignore rules are defense-in-depth. An ignored location is not approved secret st
 Configuration resolves in this order, from lowest to highest precedence:
 
 1. Core defaults
-2. Homelab configuration
+2. Deployment configuration
 3. Platform configuration
 4. Host configuration
 

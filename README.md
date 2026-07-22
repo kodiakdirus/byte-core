@@ -2,15 +2,15 @@
 
 > **Status: pre-alpha repository bootstrap**
 
-Byte Core is an independent community project exploring a safe, friendly, Codex-centered framework for homelab administration.
+Byte Core is an independent community project exploring a safe, friendly, Codex-centered framework for self-managed infrastructure.
 
 The repository has established its public foundation and initial configuration-ownership boundary. Broader architecture, governance, and safety work remains in progress. No functional release or command-line interface exists yet. Installation and operational use are not currently supported.
 
 ## Architectural rule
 
-> Byte Core owns behavior and structure; each homelab deployment owns identity and truth.
+> Byte Core owns behavior and structure; each deployment owns identity and truth.
 
-Byte Core is intended to provide reusable behavior, validation, templates, and lifecycle tooling without embedding the identity or private state of any particular homelab.
+Byte Core is intended to provide reusable behavior, validation, templates, and lifecycle tooling without embedding the identity or private state of any particular deployment.
 
 ## Safety principles
 
@@ -29,9 +29,9 @@ Ignored files remain private local state, not safe storage for secrets. Ignore r
 
 ## Current capabilities
 
-At this bootstrap stage, Byte Core provides its public repository foundation, Apache License 2.0 licensing, initial repository-security baseline, and a documented [configuration and ownership contract](docs/configuration.md). TOML 1.0 and Python 3.11 or newer are the initial configuration-format and runtime baseline.
+At this bootstrap stage, Byte Core provides its public repository foundation, Apache License 2.0 licensing, initial repository-security baseline, a documented [configuration and ownership contract](docs/configuration.md), and a [canonical deployment-document contract](docs/canonical-documents.md). TOML 1.0 and Python 3.11 or newer are the initial configuration-format and runtime baseline.
 
-The repository also contains an internal, read-only layered configuration resolver and tests. This is an experimental implementation proof, not a stable public API or user-facing validation tool.
+The repository also contains an internal, read-only layered configuration resolver, canonical document validator, neutral starter templates, and tests. These are experimental implementation proofs, not stable public APIs or user-facing validation tools.
 
 There is no public CLI, installer, lifecycle command, shell integration, functional release, or supported operational deployment yet.
 
@@ -59,6 +59,7 @@ Byte Core v0.1 is not intended to provide:
 - automatic network discovery;
 - credential storage;
 - automatic remote infrastructure mutation;
+- multi-administrator or centrally managed enterprise operation;
 - a web interface;
 - native PowerShell deployment;
 - anonymous telemetry; or

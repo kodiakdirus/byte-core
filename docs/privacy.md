@@ -1,8 +1,8 @@
 # Privacy classification and leakage prevention
 
-Byte Core is developed in public and may run near private homelab data. This document defines the privacy boundary for public development, examples, diagnostics, reports, and releases.
+Byte Core is developed in public and may run near private deployment data. This document defines the privacy boundary for public development, examples, diagnostics, reports, and releases.
 
-> Byte Core owns behavior and structure; each homelab deployment owns identity and truth.
+> Byte Core owns behavior and structure; each deployment owns identity and truth.
 
 This is a design contract. The current bootstrap provides internal privacy-scanning, allowlisting, redaction, bounded input-adapter primitives, and a CI release-artifact gate. It does not claim that an end-user CLI, automatic reporting, or a complete packaging pipeline is implemented.
 

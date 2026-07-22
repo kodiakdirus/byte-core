@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 SUPPORTED_SCHEMA_VERSIONS = frozenset({1})
-_LAYER_PRECEDENCE = ("core", "homelab", "platform", "host")
+_LAYER_PRECEDENCE = ("core", "deployment", "platform", "host")
 
 _SCHEMA: dict[str, object] = {
     "deployment": {

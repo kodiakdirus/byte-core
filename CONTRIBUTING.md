@@ -30,7 +30,7 @@ The DCO decision may be reconsidered if outside contributions begin. Any future 
 
 The project follows this rule:
 
-> Byte Core owns behavior and structure; each homelab deployment owns identity and truth.
+> Byte Core owns behavior and structure; each deployment owns identity and truth.
 
 Core contributions may define generic behavior, safe structure, validation, schemas, and fictional examples. They must not embed or assume a real deployment's identity, inventory, credentials, addresses, paths, service locations, or current state.
 
