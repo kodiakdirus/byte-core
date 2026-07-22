@@ -4,7 +4,7 @@
 
 Byte Core is an independent community project exploring a safe, friendly, Codex-centered framework for self-managed infrastructure.
 
-The repository has established its public foundation and initial configuration-ownership boundary. Broader architecture, governance, and safety work remains in progress. No functional release or command-line interface exists yet. Installation and operational use are not currently supported.
+The repository has established its public foundation and initial configuration-ownership boundary. Broader architecture, governance, and safety work remains in progress. No functional release or supported installed command-line interface exists yet. Installation and operational use are not currently supported.
 
 ## Architectural rule
 
@@ -33,7 +33,7 @@ At this bootstrap stage, Byte Core provides its public repository foundation, Ap
 
 The repository also contains an internal, read-only layered configuration resolver, canonical document validator, neutral starter templates, and tests. These are experimental implementation proofs, not stable public APIs or user-facing validation tools.
 
-There is no public CLI, installer, lifecycle command, shell integration, functional release, or supported operational deployment yet.
+The repository includes the first experimental lifecycle command, `byte check`, for read-only local prerequisite discovery. It is not yet packaged or installed as a supported public CLI. There is no installer, mutating lifecycle command, shell integration, functional release, or supported operational deployment yet.
 
 ## Planned direction
 
@@ -47,7 +47,7 @@ The current v0.1 direction includes:
 - reversible install, update, validation, and removal behavior; and
 - privacy-preserving diagnostics and issue reporting.
 
-The first functional command is planned to be `byte check`. It is not implemented.
+The first functional command, `byte check`, is implemented as an internal bootstrap proof. Its [grammar, exit statuses, and read-only boundary](docs/cli.md) are documented. Other lifecycle commands remain unimplemented.
 
 The first bootstrap release, [`v0.0.1`](https://github.com/kodiakdirus/byte-core/releases/tag/v0.0.1), is published as a pre-release with no release assets. It records the repository bootstrap and is not a functional Byte Core release.
 

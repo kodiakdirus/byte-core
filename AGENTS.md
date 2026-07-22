@@ -43,6 +43,6 @@ Separate repository planning from implementation when a checkpoint requires revi
 
 ## Current bootstrap boundary
 
-Byte Core has no functional release or command-line interface yet. Do not claim that `byte check`, installation, update, validation, removal, or other planned behavior is implemented.
+Byte Core has no functional release or supported installed command-line interface yet. The internal bootstrap implements only the read-only `byte check` proof. Do not claim that installation, initialization, planning, application, verification, update, removal, diagnostics, or other planned lifecycle behavior is implemented.
 
 The complete Codex integration and authority contract belongs to [issue #12](https://github.com/kodiakdirus/byte-core/issues/12). This file provides only the minimal public-repository safety baseline until that design is approved.
