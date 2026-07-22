@@ -1,0 +1,12 @@
+#!/bin/sh
+
+script_dir=$(CDPATH= cd -P "$(dirname "$0")" >/dev/null 2>&1 && pwd) || {
+    echo "byte: internal error" >&2
+    exit 70
+}
+
+PYTHONPATH="${script_dir}/../src${PYTHONPATH:+:${PYTHONPATH}}"
+PYTHONDONTWRITEBYTECODE=1
+export PYTHONPATH
+export PYTHONDONTWRITEBYTECODE
+exec python3 -m byte_core.cli "$@"
