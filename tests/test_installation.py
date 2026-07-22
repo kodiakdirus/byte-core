@@ -88,10 +88,12 @@ class InstallationTests(unittest.TestCase):
                 manifest_path, preserve_roots=(str(deployment),)
             )
 
-            self.assertIn(str(manifest_path), removal.remove_files)
-            self.assertEqual(removal.preserve_roots, (str(deployment),))
+            self.assertIn(str(manifest_path.resolve()), removal.remove_files)
+            self.assertEqual(removal.preserve_roots, (str(deployment.resolve()),))
             self.assertTrue(
-                all(path.startswith(str(core)) or path.startswith(str(state))
+                all(
+                    path.startswith(str(core.resolve()))
+                    or path.startswith(str(state.resolve()))
                     for path in removal.remove_files)
             )
 
