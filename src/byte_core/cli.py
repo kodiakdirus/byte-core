@@ -25,9 +25,12 @@ from .lifecycle import (
 )
 from .installation import (
     InstallationError,
+    apply_installation,
     build_install_plan,
     build_removal_plan,
+    load_install_plan,
     serialize as serialize_installation_plan,
+    verify_installation,
 )
 
 
@@ -193,13 +196,25 @@ def main(
             if not readiness.supported:
                 output.write(_format_text(readiness))
                 return ExitStatus.UNSUPPORTED
-            active_plan = load_plan(arguments.plan)
-            result = apply_initialization(active_plan)
+            try:
+                active_plan = load_plan(arguments.plan)
+                result = apply_initialization(active_plan)
+            except LifecycleError as error:
+                if error.code not in {"invalid_plan", "unsupported_plan"}:
+                    raise
+                active_plan = load_install_plan(arguments.plan)
+                result = apply_installation(active_plan)
             output.write(_format_lifecycle_result(result, arguments.format))
             return ExitStatus.SUCCESS
         if arguments.command == "verify":
-            active_plan = load_plan(arguments.plan)
-            result = verify_initialization(active_plan)
+            try:
+                active_plan = load_plan(arguments.plan)
+                result = verify_initialization(active_plan)
+            except LifecycleError as error:
+                if error.code not in {"invalid_plan", "unsupported_plan"}:
+                    raise
+                active_plan = load_install_plan(arguments.plan)
+                result = verify_installation(active_plan)
             output.write(_format_lifecycle_result(result, arguments.format))
             return ExitStatus.SUCCESS
         if arguments.command == "init":
@@ -241,6 +256,21 @@ def main(
         )
     except InstallationError as error:
         errors.write(f"byte: {error.code}\n")
+        if error.code == "recovery_required":
+            if active_plan is not None:
+                errors.write(
+                    "byte: preserve the Core and state roots; inspect the "
+                    f"operation journal for plan {active_plan.plan_id}\n"
+                )
+            return ExitStatus.RECOVERY_REQUIRED
+        if error.code == "verification_failed":
+            return ExitStatus.VERIFICATION_FAILED
+        if error.code in {
+            "target_exists", "root_link_forbidden", "artifact_link_forbidden",
+        }:
+            return ExitStatus.REFUSED
+        if error.code == "apply_failed":
+            return ExitStatus.INTERNAL_ERROR
         return ExitStatus.INVALID_INPUT
     except LifecycleError as error:
         errors.write(f"byte: {error.code}\n")

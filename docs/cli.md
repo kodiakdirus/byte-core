@@ -2,7 +2,7 @@
 
 Byte Core uses one `byte` command for lifecycle operations. The command separates checking, planning, applying, verifying, and backing out changes so that read-only discovery cannot silently become mutation.
 
-The current bootstrap implements `check` and the initial deployment lifecycle (`init`, `plan init`, `apply`, and `verify`). Update, removal, and diagnostics remain reserved design commitments, not functional capabilities.
+The current bootstrap implements `check`, the initial deployment lifecycle, and exact install-plan apply and verification. Update, destructive removal, and diagnostics remain reserved design commitments, not functional capabilities.
 
 ## Grammar
 
@@ -90,17 +90,21 @@ The current bootstrap has no installed Core integration: initialization creates 
 
 Configuration, canonical documents, operator-added files, and unrelated content remain byte-for-byte unchanged. Missing, symbolic-link, malformed, or ambiguous deployment roots are refused. Future installation work must extend removal through an exact reviewed plan and a Core-owned installation manifest before any deletion is authorized.
 
-## Installation manifest planning
+## Installation lifecycle
 
-`byte plan install` and `byte plan remove` are read-only architecture proofs. They do not install or delete anything.
+`byte plan install` is read-only. Its output can be passed unchanged to `byte apply` and `byte verify`. `byte plan remove` remains read-only and no destructive removal apply exists.
 
 An install plan inventories a complete, bounded artifact tree; records each relative path, SHA-256 digest, and executable/non-executable mode; targets an immutable `releases/VERSION` directory; and embeds a checksummed installation manifest. Core and state roots are explicit, absolute, non-overlapping paths.
 
-The manifest owns only Core release files and Byte-generated state. It records the manifest schema, Core version, active state, logical roots, release path, artifact digest, managed files, and directories that may be removed only when empty. It must not contain deployment configuration, canonical documents, credentials, inventory, or copied deployment truth.
+The manifest owns only Core release files and Byte-generated state. It records the manifest schema, Core version, active state, logical roots, release path, artifact digest, managed files, generated state paths, and directories that may be removed only when empty. It must not contain deployment configuration, canonical documents, credentials, inventory, or copied deployment truth.
+
+Install apply reloads and validates the bounded plan, re-scans the artifact, creates absent Core and state roots exclusively, verifies the immutable release, publishes the manifest, and atomically publishes checksummed `active.json` last. A journal supports conservative pre-activation cleanup. Ambiguous cleanup or any post-activation failure returns recovery-required and preserves state for inspection.
+
+Install verification requires the exact manifest, activation metadata, release paths, hashes, and modes. Exact apply replay reports `already_installed`; conflicting existing roots are refused.
 
 A removal plan accepts only an active, integrity-valid manifest. It re-reads every managed file and refuses missing, modified, mode-changed, symbolic-link, or escaped targets. Its removal list comes exclusively from the manifest. Explicit preservation roots must not overlap Core-owned paths and are recorded as postconditions.
 
-Plan output contains exact local paths and is a private local artifact. This slice does not implement install/remove apply behavior, artifact signing, operating-system defaults, privilege escalation, or release provenance.
+Plan output contains exact local paths and is a private local artifact. This slice does not implement removal apply behavior, artifact signing, operating-system defaults, privilege escalation, or release provenance.
 
 ## Reserved lifecycle behavior
 

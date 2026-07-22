@@ -185,6 +185,46 @@ class CliTests(unittest.TestCase):
             self.assertEqual(json.loads(output.getvalue())["operation"], "install")
             self.assertEqual(tuple(parent.iterdir()), before)
 
+    def test_install_plan_can_be_applied_and_verified_by_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            plan_path = parent / "install-plan.json"
+            planned = io.StringIO()
+            self.assertEqual(
+                cli.main(
+                    [
+                        "plan", "install",
+                        "--artifact-root", str(INSTALL_ARTIFACT),
+                        "--core-root", str(parent / "core"),
+                        "--state-root", str(parent / "state"),
+                        "--core-version", "0.1.0",
+                    ],
+                    stdout=planned,
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+            plan_path.write_text(planned.getvalue(), encoding="utf-8")
+
+            applied = io.StringIO()
+            verified = io.StringIO()
+            self.assertEqual(
+                cli.main(
+                    ["apply", "--plan", str(plan_path), "--format", "json"],
+                    stdout=applied,
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+            self.assertEqual(
+                cli.main(
+                    ["verify", "--plan", str(plan_path), "--format", "json"],
+                    stdout=verified,
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+
+            self.assertEqual(json.loads(applied.getvalue())["code"], "installed")
+            self.assertEqual(json.loads(verified.getvalue())["code"], "verified")
+
     def test_internal_failure_is_sanitized(self) -> None:
         errors = io.StringIO()
         private_detail = "unexpected-private-detail"
