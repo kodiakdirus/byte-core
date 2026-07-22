@@ -33,7 +33,7 @@ class ConfigurationTests(unittest.TestCase):
                 Layer("host", VALID / "host.toml"),
                 Layer("core", VALID / "core.toml"),
                 Layer("platform", VALID / "platform.toml"),
-                Layer("homelab", VALID / "homelab.toml"),
+                Layer("deployment", VALID / "deployment.toml"),
             ]
         )
 
@@ -42,7 +42,7 @@ class ConfigurationTests(unittest.TestCase):
             result.values,
             {
                 "deployment": {
-                    "name": "example-homelab",
+                    "name": "example-deployment",
                     "domain": "example.test",
                     "tags": ["host"],
                 },
@@ -51,7 +51,7 @@ class ConfigurationTests(unittest.TestCase):
                     "host": "node-42.example",
                 },
                 "paths": {
-                    "workspace": "homelab-data",
+                    "workspace": "deployment-data",
                 },
                 "retention": {
                     "cache_days": 3,
@@ -63,12 +63,12 @@ class ConfigurationTests(unittest.TestCase):
         result = resolve_configuration(self._valid_layers())
 
         expected_sources = {
-            "deployment.name": "homelab",
+            "deployment.name": "deployment",
             "deployment.domain": "core",
             "deployment.tags": "host",
             "selection.platform": "platform",
             "selection.host": "host",
-            "paths.workspace": "homelab",
+            "paths.workspace": "deployment",
             "retention.cache_days": "platform",
         }
 
@@ -80,22 +80,22 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_rejects_unknown_keys(self) -> None:
         error = self._resolve_with_invalid(
-            "homelab",
+            "deployment",
             "unknown-key.toml",
         )
 
         self.assertEqual(error.code, "unknown_key")
-        self.assertEqual(error.layer, "homelab")
+        self.assertEqual(error.layer, "deployment")
         self.assertEqual(error.key, "deployment.owner")
 
     def test_rejects_type_mismatches(self) -> None:
         error = self._resolve_with_invalid(
-            "homelab",
+            "deployment",
             "type-mismatch.toml",
         )
 
         self.assertEqual(error.code, "type_mismatch")
-        self.assertEqual(error.layer, "homelab")
+        self.assertEqual(error.layer, "deployment")
         self.assertEqual(error.key, "retention.cache_days")
         self.assertNotIn("seven", str(error))
 
@@ -154,8 +154,8 @@ class ConfigurationTests(unittest.TestCase):
             resolve_configuration(
                 [
                     Layer(
-                        "homelab",
-                        VALID / "homelab.toml",
+                        "deployment",
+                        VALID / "deployment.toml",
                     )
                 ]
             )
@@ -182,7 +182,7 @@ class ConfigurationTests(unittest.TestCase):
     def test_errors_do_not_include_file_paths(self) -> None:
         path = INVALID / "type-mismatch.toml"
         error = self._resolve_with_invalid(
-            "homelab",
+            "deployment",
             path.name,
         )
 
@@ -191,7 +191,7 @@ class ConfigurationTests(unittest.TestCase):
     def _valid_layers(self) -> list[Layer]:
         return [
             Layer("core", VALID / "core.toml"),
-            Layer("homelab", VALID / "homelab.toml"),
+            Layer("deployment", VALID / "deployment.toml"),
             Layer("platform", VALID / "platform.toml"),
             Layer("host", VALID / "host.toml"),
         ]

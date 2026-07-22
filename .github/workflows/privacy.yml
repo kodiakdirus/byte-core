@@ -28,6 +28,9 @@ jobs:
       - name: Scan public documentation release path
         run: python scripts/check_release_privacy.py docs
 
+      - name: Scan canonical starter templates
+        run: python scripts/check_release_privacy.py templates/canonical
+
       - name: Prove known release leakage is blocked
         shell: bash
         run: |

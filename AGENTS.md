@@ -4,7 +4,7 @@ Byte Core is a public repository. Treat every file, commit, issue, pull request,
 
 ## Ownership boundary
 
-> Byte Core owns behavior and structure; each homelab deployment owns identity and truth.
+> Byte Core owns behavior and structure; each deployment owns identity and truth.
 
 Core-managed content may define generic behavior, structure, validation, schemas, and fictional examples.
 
