@@ -33,7 +33,7 @@ At this bootstrap stage, Byte Core provides its public repository foundation, Ap
 
 The repository also contains an internal, read-only layered configuration resolver, canonical document validator, neutral starter templates, and tests. These are experimental implementation proofs, not stable public APIs or user-facing validation tools.
 
-The repository includes the first experimental lifecycle command, `byte check`, for read-only local prerequisite discovery. It is not yet packaged or installed as a supported public CLI. There is no installer, mutating lifecycle command, shell integration, functional release, or supported operational deployment yet.
+The repository includes experimental `byte check` and initial deployment planning, initialization, application, and verification proofs. They are not yet packaged or installed as a supported public CLI. There is no installer, update, removal, shell integration, functional release, or supported operational deployment yet.
 
 ## Planned direction
 
@@ -47,7 +47,7 @@ The current v0.1 direction includes:
 - reversible install, update, validation, and removal behavior; and
 - privacy-preserving diagnostics and issue reporting.
 
-The first functional command, `byte check`, is implemented as an internal bootstrap proof. Its [grammar, exit statuses, and read-only boundary](docs/cli.md) are documented. Other lifecycle commands remain unimplemented.
+The initial lifecycle proof implements `check`, guided `init`, read-only `plan init`, exact-plan `apply`, and `verify`. Their [grammar, exit statuses, mutation boundaries, and recovery behavior](docs/cli.md) are documented. Update, removal, and diagnostics remain unimplemented.
 
 The first bootstrap release, [`v0.0.1`](https://github.com/kodiakdirus/byte-core/releases/tag/v0.0.1), is published as a pre-release with no release assets. It records the repository bootstrap and is not a functional Byte Core release.
 
