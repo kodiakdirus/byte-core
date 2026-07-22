@@ -11,6 +11,8 @@ byte [--help]
 byte check [--format text|json]
 byte init --deployment-root ABSOLUTE_PATH
 byte plan init --deployment-root ABSOLUTE_PATH
+byte plan install --artifact-root ABSOLUTE_PATH --core-root ABSOLUTE_PATH --state-root ABSOLUTE_PATH --core-version VERSION
+byte plan remove --manifest ABSOLUTE_PATH [--preserve-root ABSOLUTE_PATH]
 byte apply --plan PLAN.json [--format text|json]
 byte verify --plan PLAN.json [--format text|json]
 byte remove --deployment-root ABSOLUTE_PATH [--format text|json]
@@ -87,6 +89,18 @@ Plan files contain exact local target paths and are private local artifacts. The
 The current bootstrap has no installed Core integration: initialization creates only deployment-owned configuration and canonical documents. Accordingly, `byte remove` currently performs a read-only preservation check. It validates the explicit deployment root, configuration schema, and canonical documents; removes nothing; and reports `core_integration_absent`.
 
 Configuration, canonical documents, operator-added files, and unrelated content remain byte-for-byte unchanged. Missing, symbolic-link, malformed, or ambiguous deployment roots are refused. Future installation work must extend removal through an exact reviewed plan and a Core-owned installation manifest before any deletion is authorized.
+
+## Installation manifest planning
+
+`byte plan install` and `byte plan remove` are read-only architecture proofs. They do not install or delete anything.
+
+An install plan inventories a complete, bounded artifact tree; records each relative path, SHA-256 digest, and executable/non-executable mode; targets an immutable `releases/VERSION` directory; and embeds a checksummed installation manifest. Core and state roots are explicit, absolute, non-overlapping paths.
+
+The manifest owns only Core release files and Byte-generated state. It records the manifest schema, Core version, active state, logical roots, release path, artifact digest, managed files, and directories that may be removed only when empty. It must not contain deployment configuration, canonical documents, credentials, inventory, or copied deployment truth.
+
+A removal plan accepts only an active, integrity-valid manifest. It re-reads every managed file and refuses missing, modified, mode-changed, symbolic-link, or escaped targets. Its removal list comes exclusively from the manifest. Explicit preservation roots must not overlap Core-owned paths and are recorded as postconditions.
+
+Plan output contains exact local paths and is a private local artifact. This slice does not implement install/remove apply behavior, artifact signing, operating-system defaults, privilege escalation, or release provenance.
 
 ## Reserved lifecycle behavior
 

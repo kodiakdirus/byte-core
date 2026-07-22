@@ -13,6 +13,7 @@ from unittest import mock
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = REPOSITORY_ROOT / "src"
 LAUNCHER = REPOSITORY_ROOT / "bin" / "byte"
+INSTALL_ARTIFACT = REPOSITORY_ROOT / "tests" / "fixtures" / "installation" / "artifact"
 sys.path.insert(0, str(SOURCE_ROOT))
 
 from byte_core import cli  # noqa: E402
@@ -162,6 +163,27 @@ class CliTests(unittest.TestCase):
                 json.loads(output.getvalue())["code"],
                 "core_integration_absent",
             )
+
+    def test_install_plan_command_is_json_and_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            output = io.StringIO()
+            before = tuple(parent.iterdir())
+
+            status = cli.main(
+                [
+                    "plan", "install",
+                    "--artifact-root", str(INSTALL_ARTIFACT),
+                    "--core-root", str(parent / "core"),
+                    "--state-root", str(parent / "state"),
+                    "--core-version", "0.1.0",
+                ],
+                stdout=output,
+            )
+
+            self.assertEqual(status, cli.ExitStatus.SUCCESS)
+            self.assertEqual(json.loads(output.getvalue())["operation"], "install")
+            self.assertEqual(tuple(parent.iterdir()), before)
 
     def test_internal_failure_is_sanitized(self) -> None:
         errors = io.StringIO()

@@ -23,6 +23,12 @@ from .lifecycle import (
     serialize_plan,
     verify_initialization,
 )
+from .installation import (
+    InstallationError,
+    build_install_plan,
+    build_removal_plan,
+    serialize as serialize_installation_plan,
+)
 
 
 class ExitStatus(IntEnum):
@@ -81,6 +87,14 @@ def build_parser() -> argparse.ArgumentParser:
     plan_operations = plan.add_subparsers(dest="operation", required=True)
     plan_init = plan_operations.add_parser("init")
     plan_init.add_argument("--deployment-root", required=True)
+    plan_install = plan_operations.add_parser("install")
+    plan_install.add_argument("--artifact-root", required=True)
+    plan_install.add_argument("--core-root", required=True)
+    plan_install.add_argument("--state-root", required=True)
+    plan_install.add_argument("--core-version", required=True)
+    plan_remove = plan_operations.add_parser("remove")
+    plan_remove.add_argument("--manifest", required=True)
+    plan_remove.add_argument("--preserve-root", action="append", default=[])
 
     for name in ("apply", "verify"):
         command = commands.add_parser(name, help=f"{name} an exact plan")
@@ -158,8 +172,21 @@ def main(
     try:
         arguments = parser.parse_args(argv)
         if arguments.command == "plan":
-            active_plan = build_initialization_plan(arguments.deployment_root)
-            output.write(serialize_plan(active_plan))
+            if arguments.operation == "init":
+                active_plan = build_initialization_plan(arguments.deployment_root)
+                output.write(serialize_plan(active_plan))
+            elif arguments.operation == "install":
+                installation_plan = build_install_plan(
+                    arguments.artifact_root, arguments.core_root,
+                    arguments.state_root, arguments.core_version,
+                )
+                output.write(serialize_installation_plan(installation_plan))
+            else:
+                removal_plan = build_removal_plan(
+                    arguments.manifest,
+                    preserve_roots=tuple(arguments.preserve_root),
+                )
+                output.write(serialize_installation_plan(removal_plan))
             return ExitStatus.SUCCESS
         if arguments.command == "apply":
             readiness = collect_check_report()
@@ -212,6 +239,9 @@ def main(
             if report.supported
             else ExitStatus.UNSUPPORTED
         )
+    except InstallationError as error:
+        errors.write(f"byte: {error.code}\n")
+        return ExitStatus.INVALID_INPUT
     except LifecycleError as error:
         errors.write(f"byte: {error.code}\n")
         if error.code == "recovery_required":
