@@ -69,7 +69,7 @@ At minimum:
 
 Do not claim success based only on implementation. Distinguish check, plan, apply, verify, and backout phases when the change has operational effects.
 
-The repository does not yet have a complete automated test or CI suite. Do not represent missing automation as completed validation.
+The repository has initial unit, privacy, and support-matrix CI, but it does not yet have a complete release-acceptance suite. Do not represent missing automation or manual platform evidence as completed validation.
 
 ## Versioning, branches, and releases
 
@@ -82,7 +82,7 @@ While the major version is `0`, Byte Core is in initial development. Interfaces,
 - `main` is the canonical integration branch.
 - The active repository ruleset prevents deletion and non-fast-forward updates to `main`.
 - The current bootstrap workflow permits reviewed, validated changes to reach `main` through normal fast-forward updates.
-- Optional `codex/*` branches are short-lived work branches. They do not represent releases or supported versions and should be removed after their reviewed changes are integrated or abandoned.
+- Optional `agent/*` branches are short-lived work branches. They do not represent releases or supported versions and should be removed after their reviewed changes are integrated or abandoned.
 - Byte Core does not currently define long-lived development, release, or maintenance branches.
 
 ### Tags and GitHub releases

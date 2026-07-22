@@ -49,10 +49,11 @@ Output must not include credentials, environment-variable contents, usernames, h
 
 `byte check` is read-only environment discovery. It checks:
 
-- Python is version 3.11 or newer;
+- Python is within the currently tested 3.11 through 3.14 range;
 - the operating system is macOS or Linux;
 - the process environment is POSIX-compatible;
-- the machine architecture can be identified without declaring unapproved architecture support; and
+- the machine architecture can be normalized;
+- the complete host is an approved v0.1 target (macOS 15 or 26 on `arm64`, or Ubuntu 24.04 on `linux/x86_64`); and
 - Git is available and reports a parseable version.
 
 The command does not:
@@ -67,6 +68,8 @@ The command does not:
 - claim that installation, initialization, updates, or removal are available.
 
 A supported check returns status 0. A recognized but currently unsupported environment returns status 3 with every check result still shown. An unexpected internal failure returns status 70 with a sanitized error.
+
+The [v0.1 support matrix](support-matrix.md) records the exact operating-system, architecture, runtime, shell, automated-evidence, and manual-evidence boundary. A recognized operating system is not sufficient by itself to claim host support.
 
 ## Initialization lifecycle
 

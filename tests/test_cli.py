@@ -78,7 +78,9 @@ class CliTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, cli.ExitStatus.USAGE)
         self.assertIn("usage error", errors.getvalue())
 
-    def test_plan_apply_and_verify_commands_share_one_plan(self) -> None:
+    @mock.patch.object(cli, "collect_check_report")
+    def test_plan_apply_and_verify_commands_share_one_plan(self, collect) -> None:
+        collect.return_value = self._report(supported=True)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "deployment"
             plan_path = Path(temporary) / "plan.json"
@@ -109,7 +111,9 @@ class CliTests(unittest.TestCase):
         self.assertIn("Result: initialized", applied.getvalue())
         self.assertEqual(json.loads(verified.getvalue())["code"], "verified")
 
-    def test_guided_init_requires_exact_plan_id(self) -> None:
+    @mock.patch.object(cli, "collect_check_report")
+    def test_guided_init_requires_exact_plan_id(self, collect) -> None:
+        collect.return_value = self._report(supported=True)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "deployment"
             errors = io.StringIO()
@@ -135,7 +139,9 @@ class CliTests(unittest.TestCase):
             self.assertTrue(root.is_dir())
             self.assertIn("Result: initialized", output.getvalue())
 
-    def test_remove_reports_preservation_without_mutation(self) -> None:
+    @mock.patch.object(cli, "collect_check_report")
+    def test_remove_reports_preservation_without_mutation(self, collect) -> None:
+        collect.return_value = self._report(supported=True)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "deployment"
             plan = build_initialization_plan(root)
@@ -185,7 +191,9 @@ class CliTests(unittest.TestCase):
             self.assertEqual(json.loads(output.getvalue())["operation"], "install")
             self.assertEqual(tuple(parent.iterdir()), before)
 
-    def test_install_plan_can_be_applied_and_verified_by_cli(self) -> None:
+    @mock.patch.object(cli, "collect_check_report")
+    def test_install_plan_can_be_applied_and_verified_by_cli(self, collect) -> None:
+        collect.return_value = self._report(supported=True)
         with tempfile.TemporaryDirectory() as temporary:
             parent = Path(temporary)
             plan_path = parent / "install-plan.json"
@@ -249,6 +257,11 @@ class CliTests(unittest.TestCase):
         with (
             mock.patch.object(cli.platform, "system", return_value="Linux"),
             mock.patch.object(cli.platform, "machine", return_value="x86_64"),
+            mock.patch.object(
+                cli.platform,
+                "freedesktop_os_release",
+                return_value={"ID": "ubuntu", "VERSION_ID": "24.04"},
+            ),
             mock.patch.object(cli.shutil, "which", return_value="git"),
             mock.patch.object(cli.subprocess, "run", return_value=completed),
         ):
@@ -257,7 +270,72 @@ class CliTests(unittest.TestCase):
         values = {check.name: check.value for check in report.checks}
         self.assertEqual(values["platform"], "linux")
         self.assertEqual(values["architecture"], "x86_64")
+        self.assertEqual(values["host"], "linux/x86_64/ubuntu/24.04")
         self.assertEqual(values["git"], "2.50.1")
+
+    def test_support_matrix_decisions_are_exact(self) -> None:
+        cases = (
+            ("Darwin", "arm64", "macos/15", True),
+            ("Darwin", "arm64", "macos/26", True),
+            ("Darwin", "arm64", "macos/25", False),
+            ("Darwin", "x86_64", "macos/26", False),
+            ("Linux", "amd64", "ubuntu/24.04", True),
+            ("Linux", "x86_64", "debian/13", False),
+            ("Linux", "aarch64", "ubuntu/24.04", False),
+            ("Windows", "AMD64", "unknown", False),
+            ("FictionOS", "mystery", "unknown", False),
+        )
+        for system, machine, host_release, supported in cases:
+            with self.subTest(
+                system=system, machine=machine, host_release=host_release
+            ):
+                report = cli.build_check_report(
+                    system=system,
+                    machine=machine,
+                    posix=system != "Windows",
+                    python_version=(3, 11),
+                    git_version="2.50.1",
+                    host_release=host_release,
+                )
+                self.assertEqual(report.supported, supported)
+
+    def test_runtime_matrix_has_bounded_python_support(self) -> None:
+        for version, supported in (
+            ((3, 10), False),
+            ((3, 11), True),
+            ((3, 14), True),
+            ((3, 15), False),
+            ((4, 0), False),
+        ):
+            with self.subTest(version=version):
+                report = cli.build_check_report(
+                    system="Linux",
+                    machine="x86_64",
+                    posix=True,
+                    python_version=version,
+                    git_version="2.50.1",
+                    host_release="ubuntu/24.04",
+                )
+                self.assertEqual(report.supported, supported)
+
+    def test_missing_host_release_is_unknown(self) -> None:
+        with mock.patch.object(
+            cli.platform,
+            "freedesktop_os_release",
+            side_effect=OSError("fictional unavailable release metadata"),
+        ):
+            self.assertEqual(cli._host_release("Linux"), "unknown")
+        with mock.patch.object(cli.platform, "mac_ver", return_value=("", (), "")):
+            self.assertEqual(cli._host_release("Darwin"), "unknown")
+        self.assertEqual(cli._host_release("FictionOS"), "unknown")
+
+    def test_current_macos_major_release_is_normalized(self) -> None:
+        with mock.patch.object(
+            cli.platform,
+            "mac_ver",
+            return_value=("26.4.0", ("", "", ""), "arm64"),
+        ):
+            self.assertEqual(cli._host_release("Darwin"), "macos/26")
 
     def test_launcher_help_is_useful(self) -> None:
         completed = subprocess.run(

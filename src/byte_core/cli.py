@@ -59,6 +59,15 @@ class CheckReport:
     checks: tuple[CheckResult, ...]
 
 
+SUPPORTED_HOSTS = frozenset(
+    {
+        ("linux", "x86_64", "ubuntu/24.04"),
+        ("macos", "arm64", "macos/15"),
+        ("macos", "arm64", "macos/26"),
+    }
+)
+
+
 class _ArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         self.print_usage(sys.stderr)
@@ -114,20 +123,37 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def collect_check_report() -> CheckReport:
-    python_supported = sys.version_info >= (3, 11)
-    python_value = f"{sys.version_info.major}.{sys.version_info.minor}"
-
     system = platform.system()
-    normalized_system = {
-        "Darwin": "macos",
-        "Linux": "linux",
-    }.get(system, "unsupported")
-    platform_supported = normalized_system != "unsupported" and os.name == "posix"
+    return build_check_report(
+        system=system,
+        machine=platform.machine(),
+        posix=os.name == "posix",
+        python_version=(sys.version_info.major, sys.version_info.minor),
+        git_version=_git_version(),
+        host_release=_host_release(system),
+    )
 
-    machine = _safe_identifier(platform.machine())
-    architecture_identified = machine != "unknown"
 
-    git_version = _git_version()
+def build_check_report(
+    *,
+    system: str,
+    machine: str,
+    posix: bool,
+    python_version: tuple[int, int],
+    git_version: str | None,
+    host_release: str,
+) -> CheckReport:
+    python_supported = (3, 11) <= python_version <= (3, 14)
+    python_value = f"{python_version[0]}.{python_version[1]}"
+    normalized_system = _normalize_system(system)
+    normalized_machine = _normalize_machine(machine)
+    platform_supported = normalized_system != "unsupported" and posix
+    architecture_identified = normalized_machine != "unknown"
+    host_supported = (
+        platform_supported
+        and architecture_identified
+        and (normalized_system, normalized_machine, host_release) in SUPPORTED_HOSTS
+    )
     git_supported = git_version is not None
 
     checks = (
@@ -144,7 +170,12 @@ def collect_check_report() -> CheckReport:
         CheckResult(
             "architecture",
             "pass" if architecture_identified else "fail",
-            machine,
+            normalized_machine,
+        ),
+        CheckResult(
+            "host",
+            "pass" if host_supported else "fail",
+            f"{normalized_system}/{normalized_machine}/{host_release}",
         ),
         CheckResult(
             "git",
@@ -157,6 +188,36 @@ def collect_check_report() -> CheckReport:
         supported=all(check.status == "pass" for check in checks),
         checks=checks,
     )
+
+
+def _normalize_system(value: str) -> str:
+    return {"Darwin": "macos", "Linux": "linux"}.get(value, "unsupported")
+
+
+def _normalize_machine(value: str) -> str:
+    machine = _safe_identifier(value)
+    return {
+        "aarch64": "arm64",
+        "amd64": "x86_64",
+        "x64": "x86_64",
+    }.get(machine, machine)
+
+
+def _host_release(system: str) -> str:
+    if system == "Darwin":
+        version = _safe_identifier(platform.mac_ver()[0].partition(".")[0])
+        return "unknown" if version == "unknown" else f"macos/{version}"
+    if system == "Linux":
+        try:
+            release = platform.freedesktop_os_release()
+        except OSError:
+            return "unknown"
+        identifier = _safe_identifier(release.get("ID", ""))
+        version = _safe_identifier(release.get("VERSION_ID", ""))
+        if identifier == "unknown" or version == "unknown":
+            return "unknown"
+        return f"{identifier}/{version}"
+    return "unknown"
 
 
 def main(

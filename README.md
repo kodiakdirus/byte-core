@@ -29,11 +29,13 @@ Ignored files remain private local state, not safe storage for secrets. Ignore r
 
 ## Current capabilities
 
-At this bootstrap stage, Byte Core provides its public repository foundation, Apache License 2.0 licensing, initial repository-security baseline, a documented [configuration and ownership contract](docs/configuration.md), and a [canonical deployment-document contract](docs/canonical-documents.md). TOML 1.0 and Python 3.11 or newer are the initial configuration-format and runtime baseline.
+At this bootstrap stage, Byte Core provides its public repository foundation, Apache License 2.0 licensing, initial repository-security baseline, a documented [configuration and ownership contract](docs/configuration.md), and a [canonical deployment-document contract](docs/canonical-documents.md). TOML 1.0 and Python 3.11 are the initial minimum configuration-format and runtime baseline; Python 3.11 through 3.14 form the current CI target.
 
 The repository also contains an internal, read-only layered configuration resolver, canonical document validator, neutral starter templates, an [installation lifecycle contract](docs/installation.md), install apply and verification, a read-only removal planner, and tests. These are experimental implementation proofs, not stable public APIs or supported user-facing tools.
 
 The repository includes experimental `byte check` and initial deployment planning, initialization, application, and verification proofs. They are not yet packaged or installed as a supported public CLI. There is no installer, update, removal, shell integration, functional release, or supported operational deployment yet.
+
+The intended v0.1 host and runtime boundary, automated evidence, and remaining manual evidence are published in the [support matrix](docs/support-matrix.md). The matrix defines release targets without changing the repository's pre-alpha support status.
 
 ## Planned direction
 
@@ -41,7 +43,7 @@ The current v0.1 direction includes:
 
 - a thin POSIX-compatible launcher backed by Python 3;
 - standard-library-first implementation with no third-party runtime dependencies by default;
-- initial support for macOS and mainstream Linux;
+- initial support targets for macOS 15 and 26 on Apple silicon and Ubuntu 24.04 on x86_64;
 - initial shell integration for Bash and Zsh;
 - layered, deployment-owned configuration and inventory;
 - reversible install, update, validation, and removal behavior; and
