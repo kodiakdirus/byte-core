@@ -19,6 +19,7 @@ from .lifecycle import (
     apply_initialization,
     build_initialization_plan,
     load_plan,
+    remove_core_integration,
     serialize_plan,
     verify_initialization,
 )
@@ -85,7 +86,12 @@ def build_parser() -> argparse.ArgumentParser:
         command = commands.add_parser(name, help=f"{name} an exact plan")
         command.add_argument("--plan", required=True)
         command.add_argument("--format", choices=("text", "json"), default="text")
-    for name in ("update", "remove", "doctor"):
+    remove = commands.add_parser(
+        "remove", help="remove Core integration while preserving deployment data"
+    )
+    remove.add_argument("--deployment-root", required=True)
+    remove.add_argument("--format", choices=("text", "json"), default="text")
+    for name in ("update", "doctor"):
         commands.add_parser(name, help="reserved; not implemented")
     return parser
 
@@ -183,6 +189,14 @@ def main(
                 return ExitStatus.REFUSED
             result = apply_initialization(active_plan)
             output.write(_format_lifecycle_result(result, "text"))
+            return ExitStatus.SUCCESS
+        if arguments.command == "remove":
+            readiness = collect_check_report()
+            if not readiness.supported:
+                output.write(_format_text(readiness))
+                return ExitStatus.UNSUPPORTED
+            result = remove_core_integration(arguments.deployment_root)
+            output.write(_format_lifecycle_result(result, arguments.format))
             return ExitStatus.SUCCESS
         if arguments.command != "check":
             errors.write("byte: command is not implemented\n")

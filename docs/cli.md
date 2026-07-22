@@ -13,10 +13,10 @@ byte init --deployment-root ABSOLUTE_PATH
 byte plan init --deployment-root ABSOLUTE_PATH
 byte apply --plan PLAN.json [--format text|json]
 byte verify --plan PLAN.json [--format text|json]
+byte remove --deployment-root ABSOLUTE_PATH [--format text|json]
 
 # Reserved; not implemented
 byte update
-byte remove
 byte doctor
 ```
 
@@ -82,10 +82,15 @@ The initial configuration contains only `schema_version = 1`; it does not invent
 
 Plan files contain exact local target paths and are private local artifacts. They must not be committed to the public repository.
 
+## Removal boundary
+
+The current bootstrap has no installed Core integration: initialization creates only deployment-owned configuration and canonical documents. Accordingly, `byte remove` currently performs a read-only preservation check. It validates the explicit deployment root, configuration schema, and canonical documents; removes nothing; and reports `core_integration_absent`.
+
+Configuration, canonical documents, operator-added files, and unrelated content remain byte-for-byte unchanged. Missing, symbolic-link, malformed, or ambiguous deployment roots are refused. Future installation work must extend removal through an exact reviewed plan and a Core-owned installation manifest before any deletion is authorized.
+
 ## Reserved lifecycle behavior
 
 - `update` will use the versioned update and rollback contract.
-- `remove` will reverse Core integration while preserving deployment-owned data.
 - `doctor` will construct minimal local diagnostics under the privacy contract.
 
 These reserved descriptions do not imply implementation.

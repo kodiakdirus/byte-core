@@ -134,6 +134,35 @@ class CliTests(unittest.TestCase):
             self.assertTrue(root.is_dir())
             self.assertIn("Result: initialized", output.getvalue())
 
+    def test_remove_reports_preservation_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "deployment"
+            plan = build_initialization_plan(root)
+            from byte_core.lifecycle import apply_initialization
+
+            apply_initialization(plan)
+            before = {path.name: path.read_bytes() for path in root.iterdir()}
+            output = io.StringIO()
+
+            status = cli.main(
+                [
+                    "remove",
+                    "--deployment-root",
+                    str(root),
+                    "--format",
+                    "json",
+                ],
+                stdout=output,
+            )
+
+            after = {path.name: path.read_bytes() for path in root.iterdir()}
+            self.assertEqual(status, cli.ExitStatus.SUCCESS)
+            self.assertEqual(before, after)
+            self.assertEqual(
+                json.loads(output.getvalue())["code"],
+                "core_integration_absent",
+            )
+
     def test_internal_failure_is_sanitized(self) -> None:
         errors = io.StringIO()
         private_detail = "unexpected-private-detail"
