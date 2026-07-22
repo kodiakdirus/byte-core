@@ -308,6 +308,38 @@ class InstallationTests(unittest.TestCase):
                 )
             self.assertEqual(raised.exception.code, "artifact_link_forbidden")
 
+    def test_parent_aliases_are_canonicalized_but_target_links_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            real = parent / "real"
+            real.mkdir()
+            artifact = real / "artifact"
+            shutil.copytree(ARTIFACT, artifact)
+            alias = parent / "alias"
+            try:
+                alias.symlink_to(real, target_is_directory=True)
+            except (NotImplementedError, OSError):
+                return
+
+            plan = build_install_plan(
+                alias / "artifact",
+                alias / "core",
+                alias / "state",
+                "0.1.0",
+            )
+
+            self.assertEqual(plan.artifact_root, str(artifact.resolve()))
+            self.assertEqual(plan.core_root, str((real / "core").resolve()))
+            self.assertEqual(plan.state_root, str((real / "state").resolve()))
+            apply_installation(plan)
+            self.assertEqual(verify_installation(plan).code, "verified")
+
+            linked_manifest = parent / "manifest-link.json"
+            linked_manifest.symlink_to(real / "state" / "installation.json")
+            with self.assertRaises(InstallationError) as raised:
+                load_installation_manifest(linked_manifest)
+            self.assertEqual(raised.exception.code, "manifest_read_error")
+
 
 if __name__ == "__main__":
     unittest.main()

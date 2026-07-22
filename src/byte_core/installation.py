@@ -745,9 +745,9 @@ def _existing_root(value: str | os.PathLike[str], code: str) -> Path:
         resolved = path.resolve(strict=True)
     except (OSError, RuntimeError) as error:
         raise InstallationError(code) from error
-    if resolved != path or not path.is_dir():
+    if not resolved.is_dir():
         raise InstallationError(code)
-    return path
+    return resolved
 
 
 def _new_root(value: str | os.PathLike[str], code: str) -> Path:
@@ -780,11 +780,12 @@ def _absolute_text_path(value: str | os.PathLike[str], code: str) -> Path:
 def _regular_file(value: str | os.PathLike[str], code: str) -> Path:
     path = _absolute_text_path(value, code)
     try:
-        if _is_link_like(path) or not path.is_file() or path.resolve(strict=True) != path:
+        if _is_link_like(path) or not path.is_file():
             raise InstallationError(code)
+        resolved = path.resolve(strict=True)
     except (OSError, RuntimeError) as error:
         raise InstallationError(code) from error
-    return path
+    return resolved
 
 
 def _plan_file(value: str | os.PathLike[str]) -> Path:
@@ -797,8 +798,6 @@ def _plan_file(value: str | os.PathLike[str]) -> Path:
         raise
     except (OSError, RuntimeError, TypeError, ValueError) as error:
         raise InstallationError("plan_read_error") from error
-    if resolved != path.absolute():
-        raise InstallationError("plan_link_forbidden")
     return resolved
 
 

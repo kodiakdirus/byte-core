@@ -17,7 +17,7 @@ The current bootstrap requires explicit absolute roots. It can apply and verify 
 
 Manifest schema 1 records the Core version, active state, Core and state roots, relative release directory, aggregate artifact digest, managed relative paths, per-file SHA-256 digests and modes, generated state paths, removable directories, and a checksum over the complete unsigned manifest.
 
-Paths are normalized, relative within the release where required, unique, and free of parent traversal. Core and state roots cannot overlap. Files use only the initial executable (`0700`) or non-executable (`0600`) modes.
+Paths are normalized, relative within the release where required, unique, and free of parent traversal. Existing parent aliases are resolved before a plan records absolute paths, which accommodates canonical operating-system aliases such as macOS `/var` to `/private/var`. A managed target that is itself a symbolic link remains forbidden. Core and state roots cannot overlap. Files use only the initial executable (`0700`) or non-executable (`0600`) modes.
 
 The checksum detects corruption or accidental editing. It does not authenticate a release or replace future signing and provenance requirements.
 
