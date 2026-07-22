@@ -16,6 +16,7 @@ LAUNCHER = REPOSITORY_ROOT / "bin" / "byte"
 sys.path.insert(0, str(SOURCE_ROOT))
 
 from byte_core import cli  # noqa: E402
+from byte_core.lifecycle import build_initialization_plan  # noqa: E402
 
 
 class CliTests(unittest.TestCase):
@@ -62,7 +63,7 @@ class CliTests(unittest.TestCase):
     def test_reserved_command_is_clear_and_does_not_run_check(self) -> None:
         errors = io.StringIO()
         with mock.patch.object(cli, "collect_check_report") as collect:
-            status = cli.main(["init"], stderr=errors)
+            status = cli.main(["update"], stderr=errors)
 
         self.assertEqual(status, cli.ExitStatus.UNSUPPORTED)
         self.assertEqual(errors.getvalue(), "byte: command is not implemented\n")
@@ -75,6 +76,63 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, cli.ExitStatus.USAGE)
         self.assertIn("usage error", errors.getvalue())
+
+    def test_plan_apply_and_verify_commands_share_one_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "deployment"
+            plan_path = Path(temporary) / "plan.json"
+            plan_output = io.StringIO()
+            self.assertEqual(
+                cli.main(
+                    ["plan", "init", "--deployment-root", str(root)],
+                    stdout=plan_output,
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+            plan_path.write_text(plan_output.getvalue(), encoding="utf-8")
+
+            applied = io.StringIO()
+            verified = io.StringIO()
+            self.assertEqual(
+                cli.main(["apply", "--plan", str(plan_path)], stdout=applied),
+                cli.ExitStatus.SUCCESS,
+            )
+            self.assertEqual(
+                cli.main(
+                    ["verify", "--plan", str(plan_path), "--format", "json"],
+                    stdout=verified,
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+
+        self.assertIn("Result: initialized", applied.getvalue())
+        self.assertEqual(json.loads(verified.getvalue())["code"], "verified")
+
+    def test_guided_init_requires_exact_plan_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "deployment"
+            errors = io.StringIO()
+            status = cli.main(
+                ["init", "--deployment-root", str(root)],
+                stdout=io.StringIO(),
+                stderr=errors,
+                stdin=io.StringIO("no\n"),
+            )
+
+            self.assertEqual(status, cli.ExitStatus.REFUSED)
+            self.assertFalse(root.exists())
+
+            plan = build_initialization_plan(root)
+            output = io.StringIO()
+            status = cli.main(
+                ["init", "--deployment-root", str(root)],
+                stdout=output,
+                stdin=io.StringIO(plan.plan_id + "\n"),
+            )
+
+            self.assertEqual(status, cli.ExitStatus.SUCCESS)
+            self.assertTrue(root.is_dir())
+            self.assertIn("Result: initialized", output.getvalue())
 
     def test_internal_failure_is_sanitized(self) -> None:
         errors = io.StringIO()

@@ -14,6 +14,15 @@ from dataclasses import asdict, dataclass
 from enum import IntEnum
 from typing import Sequence, TextIO
 
+from .lifecycle import (
+    LifecycleError,
+    apply_initialization,
+    build_initialization_plan,
+    load_plan,
+    serialize_plan,
+    verify_initialization,
+)
+
 
 class ExitStatus(IntEnum):
     SUCCESS = 0
@@ -64,7 +73,19 @@ def build_parser() -> argparse.ArgumentParser:
         default="text",
         help="select human-readable text or deterministic JSON output",
     )
-    for name in ("init", "plan", "apply", "verify", "update", "remove", "doctor"):
+    init = commands.add_parser("init", help="initialize a new deployment")
+    init.add_argument("--deployment-root", required=True)
+
+    plan = commands.add_parser("plan", help="build a read-only lifecycle plan")
+    plan_operations = plan.add_subparsers(dest="operation", required=True)
+    plan_init = plan_operations.add_parser("init")
+    plan_init.add_argument("--deployment-root", required=True)
+
+    for name in ("apply", "verify"):
+        command = commands.add_parser(name, help=f"{name} an exact plan")
+        command.add_argument("--plan", required=True)
+        command.add_argument("--format", choices=("text", "json"), default="text")
+    for name in ("update", "remove", "doctor"):
         commands.add_parser(name, help="reserved; not implemented")
     return parser
 
@@ -120,13 +141,49 @@ def main(
     *,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
+    stdin: TextIO | None = None,
 ) -> int:
     output = stdout or sys.stdout
     errors = stderr or sys.stderr
+    input_stream = stdin or sys.stdin
     parser = build_parser()
+    active_plan = None
 
     try:
         arguments = parser.parse_args(argv)
+        if arguments.command == "plan":
+            active_plan = build_initialization_plan(arguments.deployment_root)
+            output.write(serialize_plan(active_plan))
+            return ExitStatus.SUCCESS
+        if arguments.command == "apply":
+            readiness = collect_check_report()
+            if not readiness.supported:
+                output.write(_format_text(readiness))
+                return ExitStatus.UNSUPPORTED
+            active_plan = load_plan(arguments.plan)
+            result = apply_initialization(active_plan)
+            output.write(_format_lifecycle_result(result, arguments.format))
+            return ExitStatus.SUCCESS
+        if arguments.command == "verify":
+            active_plan = load_plan(arguments.plan)
+            result = verify_initialization(active_plan)
+            output.write(_format_lifecycle_result(result, arguments.format))
+            return ExitStatus.SUCCESS
+        if arguments.command == "init":
+            readiness = collect_check_report()
+            output.write(_format_text(readiness))
+            if not readiness.supported:
+                return ExitStatus.UNSUPPORTED
+            active_plan = build_initialization_plan(arguments.deployment_root)
+            output.write(_format_plan_preview(active_plan))
+            output.write("Type the full plan ID to apply: ")
+            output.flush()
+            if input_stream.readline().strip() != active_plan.plan_id:
+                errors.write("byte: initialization cancelled\n")
+                return ExitStatus.REFUSED
+            result = apply_initialization(active_plan)
+            output.write(_format_lifecycle_result(result, "text"))
+            return ExitStatus.SUCCESS
         if arguments.command != "check":
             errors.write("byte: command is not implemented\n")
             return ExitStatus.UNSUPPORTED
@@ -141,6 +198,25 @@ def main(
             if report.supported
             else ExitStatus.UNSUPPORTED
         )
+    except LifecycleError as error:
+        errors.write(f"byte: {error.code}\n")
+        if error.code == "recovery_required":
+            if active_plan is not None:
+                errors.write(
+                    "byte: preserve the deployment root and compare only the "
+                    f"targets in plan {active_plan.plan_id}:\n"
+                )
+                errors.write(f"  root: {active_plan.deployment_root}\n")
+                for item in active_plan.files:
+                    errors.write(f"  target: {item.relative_path}\n")
+            return ExitStatus.RECOVERY_REQUIRED
+        if error.code == "verification_failed":
+            return ExitStatus.VERIFICATION_FAILED
+        if error.code in {"target_exists", "target_link_forbidden"}:
+            return ExitStatus.REFUSED
+        if error.code == "apply_failed":
+            return ExitStatus.INTERNAL_ERROR
+        return ExitStatus.INVALID_INPUT
     except SystemExit:
         raise
     except Exception:
@@ -185,6 +261,24 @@ def _format_text(report: CheckReport) -> str:
     summary = "supported" if report.supported else "unsupported"
     lines.append(f"Result: {summary}")
     return "\n".join(lines) + "\n"
+
+
+def _format_plan_preview(plan) -> str:
+    lines = [
+        "Byte initialization plan",
+        f"Deployment root: {plan.deployment_root}",
+        f"Plan ID: {plan.plan_id}",
+        "Create:",
+    ]
+    lines.extend(f"  - {item.relative_path}" for item in plan.files)
+    lines.append("Backout: remove only unchanged files created by this invocation")
+    return "\n".join(lines) + "\n"
+
+
+def _format_lifecycle_result(result, output_format: str) -> str:
+    if output_format == "json":
+        return json.dumps(asdict(result), sort_keys=True) + "\n"
+    return f"Result: {result.code}\nPlan ID: {result.plan_id}\n"
 
 
 if __name__ == "__main__":

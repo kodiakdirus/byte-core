@@ -2,19 +2,19 @@
 
 Byte Core uses one `byte` command for lifecycle operations. The command separates checking, planning, applying, verifying, and backing out changes so that read-only discovery cannot silently become mutation.
 
-Only `byte check` is implemented in the current bootstrap. The other command names in this contract are reserved design commitments, not functional capabilities.
+The current bootstrap implements `check` and the initial deployment lifecycle (`init`, `plan init`, `apply`, and `verify`). Update, removal, and diagnostics remain reserved design commitments, not functional capabilities.
 
 ## Grammar
 
 ```text
 byte [--help]
 byte check [--format text|json]
+byte init --deployment-root ABSOLUTE_PATH
+byte plan init --deployment-root ABSOLUTE_PATH
+byte apply --plan PLAN.json [--format text|json]
+byte verify --plan PLAN.json [--format text|json]
 
 # Reserved; not implemented
-byte init
-byte plan
-byte apply
-byte verify
 byte update
 byte remove
 byte doctor
@@ -66,14 +66,26 @@ The command does not:
 
 A supported check returns status 0. A recognized but currently unsupported environment returns status 3 with every check result still shown. An unexpected internal failure returns status 70 with a sanitized error.
 
+## Initialization lifecycle
+
+`byte plan init` is read-only and emits a deterministic JSON plan to standard output. The operator may redirect that output to a private local plan file. A plan binds its schema, operation, absolute deployment root, exact relative targets, expected SHA-256 content digests, preconditions, postconditions, backout actions, and plan ID.
+
+`byte apply` accepts only a valid, untampered plan. It re-derives the approved starter content, validates the plan ID and hashes, creates a previously absent deployment root, and creates every file exclusively. It never overwrites an existing path. An exact replay succeeds only when verification proves the existing deployment still matches the plan; any conflicting state is refused.
+
+`byte verify` checks the exact file set and hashes, parses the identity-neutral TOML skeleton, and runs canonical-document validation.
+
+`byte init` is the guided human interface over the same engine. It displays the deployment root, plan ID, exact created files, and backout boundary. Mutation begins only after the operator types the full plan ID.
+
+If apply fails, Byte removes only files created by that invocation whose content still matches the plan. If a created file changed or safe cleanup is otherwise impossible, Byte preserves the remaining state and returns `recovery-required` rather than deleting ambiguous content.
+
+The initial configuration contains only `schema_version = 1`; it does not invent deployment identity or infrastructure facts. The four copied canonical documents become deployment-owned immediately.
+
+Plan files contain exact local target paths and are private local artifacts. They must not be committed to the public repository.
+
 ## Reserved lifecycle behavior
 
-- `init` will create deployment-owned configuration and starter documents through an explicit reviewed flow.
-- `plan` will show exact intended targets and backout steps without mutation.
-- `apply` will perform only an exact reviewed plan.
-- `verify` will prove documented postconditions.
 - `update` will use the versioned update and rollback contract.
 - `remove` will reverse Core integration while preserving deployment-owned data.
 - `doctor` will construct minimal local diagnostics under the privacy contract.
 
-These descriptions do not imply implementation.
+These reserved descriptions do not imply implementation.
