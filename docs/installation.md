@@ -40,11 +40,11 @@ Exact replay succeeds only when the plan ID, active metadata, manifest, complete
 
 ## Removal planning
 
-Removal planning accepts only an active, checksummed manifest. It verifies every managed file still exists at its exact contained path with the recorded digest and mode. A missing, changed, linked, or ambiguous managed path refuses the plan.
+Removal planning accepts only an active, checksummed compatibility manifest and its complete immutable manifest store. It verifies every recorded release file still exists at its exact contained path with the recorded digest and mode. A missing, changed, linked, unowned, or ambiguous path beneath the Core or state roots refuses the plan.
 
-The removal list is derived exclusively from manifest-owned paths. Directories are eligible only when the manifest names them and a future apply operation proves they are empty. The manifest itself is removed last. Explicit preservation roots must not overlap Core-managed paths and are recorded as postconditions.
+The removal list is derived exclusively from those verified manifests. Exact-plan apply removes the activation marker first, then only listed files and empty directories. Explicit preservation roots must exist, must not overlap Core-managed paths, and are verified after removal.
 
-Destructive removal remains planning-only. Removal apply, automated interrupted-operation recovery, artifact signing, platform defaults, and privilege elevation require later reviewed slices.
+Removal has no guessed rollback: deleted immutable Core files are reconstructible only from their release artifacts. An interruption stops immediately with `recovery_required`; the reviewed plan remains the exact record of removed and remaining targets. A partially applied plan cannot resume silently. Artifact signing, platform defaults, and privilege elevation remain outside this slice.
 
 ## Update planning
 

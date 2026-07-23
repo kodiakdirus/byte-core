@@ -212,44 +212,46 @@ def build_removal_plan(
     preserve_roots: tuple[str, ...] = (),
 ) -> RemovalPlan:
     path = _regular_file(manifest_path, "manifest_read_error")
-    manifest = load_installation_manifest(path)
-    release_root = _existing_root(
-        Path(manifest.core_root) / manifest.release_relative_path,
-        "managed_root_invalid",
+    active_manifest, manifests = _removal_inventory(path)
+    core = Path(active_manifest.core_root)
+    state = Path(active_manifest.state_root)
+    remove_files = {
+        str(core / manifest.release_relative_path / item.relative_path)
+        for manifest in manifests
+        for item in manifest.files
+    }
+    remove_files.update(
+        str(_manifest_generation_path(state, manifest))
+        for manifest in manifests
     )
-    remove_files: list[str] = []
-    for item in manifest.files:
-        target = release_root / item.relative_path
-        _require_matching_file(target, item)
-        remove_files.append(str(target))
-    for generated in manifest.generated_state_paths:
-        generated_path = Path(manifest.state_root) / generated
-        if generated_path != path and generated_path.exists():
-            _regular_file(generated_path, "managed_state_invalid")
-        remove_files.append(str(generated_path))
-    generation = _manifest_generation_path(Path(manifest.state_root), manifest)
-    if generation.exists():
-        _regular_file(generation, "managed_state_invalid")
-    remove_files.append(str(generation))
+    remove_files.update((str(state / "active.json"), str(path)))
+    remove_directories = {
+        str(core / relative)
+        for manifest in manifests
+        for relative in manifest.removable_directories
+    }
+    remove_directories.update(
+        (str(state / MANIFEST_STORE_DIRECTORY), str(core), str(state))
+    )
     normalized_preserve = tuple(sorted(str(_existing_root(root, "invalid_preserve_root"))
                                        for root in preserve_roots))
     for preserved in normalized_preserve:
         if any(
             _contains(Path(preserved), owned) or _contains(owned, Path(preserved))
-            for owned in (Path(manifest.core_root), Path(manifest.state_root))
+            for owned in (core, state)
         ):
             raise InstallationError("ownership_overlap")
     unsigned = {
         "schema_version": INSTALL_PLAN_SCHEMA_VERSION,
         "operation": "remove",
         "manifest_path": str(path),
-        "remove_files": sorted(remove_files, reverse=True),
+        "remove_files": [
+            str(state / "active.json"),
+            *sorted(remove_files - {str(state / "active.json"), str(path)}),
+            str(path),
+        ],
         "remove_directories": sorted(
-            (
-                *(str(Path(manifest.core_root) / item)
-                  for item in manifest.removable_directories),
-                str(Path(manifest.state_root) / MANIFEST_STORE_DIRECTORY),
-            ),
+            remove_directories,
             key=lambda value: (value.count(os.sep), value), reverse=True,
         ),
         "preserve_roots": list(normalized_preserve),
@@ -263,6 +265,38 @@ def build_removal_plan(
         tuple(unsigned["postconditions"]),
         _digest(_canonical_json(unsigned).encode()),
     )
+
+
+def load_removal_plan(path: str | os.PathLike[str]) -> RemovalPlan:
+    plan_path = _plan_file(path)
+    try:
+        raw = json.loads(
+            _read_bounded(plan_path, MAX_INSTALL_PLAN_BYTES).decode("utf-8")
+        )
+    except InstallationError:
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise InstallationError("invalid_plan") from error
+    keys = {
+        "schema_version", "operation", "manifest_path", "remove_files",
+        "remove_directories", "preserve_roots", "preconditions",
+        "postconditions", "plan_id",
+    }
+    if type(raw) is not dict or set(raw) != keys:
+        raise InstallationError("invalid_plan")
+    try:
+        plan = RemovalPlan(
+            raw["schema_version"], raw["operation"], raw["manifest_path"],
+            _plan_string_tuple(raw["remove_files"]),
+            _plan_string_tuple(raw["remove_directories"]),
+            _plan_string_tuple(raw["preserve_roots"]),
+            _plan_string_tuple(raw["preconditions"]),
+            _plan_string_tuple(raw["postconditions"]), raw["plan_id"],
+        )
+    except (KeyError, TypeError) as error:
+        raise InstallationError("invalid_plan") from error
+    _validate_removal_plan(plan)
+    return plan
 
 
 def build_update_plan(
@@ -706,6 +740,47 @@ def verify_installation(plan: InstallPlan) -> InstallationResult:
     )
 
 
+def apply_removal(plan: RemovalPlan) -> InstallationResult:
+    _validate_removal_plan(plan)
+    if _removal_absent(plan):
+        core, state = _removal_roots(plan)
+        return InstallationResult(
+            "already_removed", plan.plan_id, str(core), str(state),
+        )
+    if any(not Path(item).exists() or _is_link_like(Path(item))
+           for item in plan.remove_files):
+        raise InstallationError("plan_stale")
+    rebuilt = build_removal_plan(
+        plan.manifest_path, preserve_roots=plan.preserve_roots
+    )
+    if rebuilt != plan:
+        raise InstallationError("plan_stale")
+    try:
+        for item in plan.remove_files:
+            Path(item).unlink()
+        for item in plan.remove_directories:
+            Path(item).rmdir()
+    except OSError as error:
+        raise InstallationError("recovery_required") from error
+    _verify_removal(plan)
+    core, state = _removal_roots(plan)
+    return InstallationResult(
+        "removed", plan.plan_id, str(core), str(state),
+    )
+
+
+def verify_removal(plan: RemovalPlan) -> InstallationResult:
+    _validate_removal_plan(plan)
+    try:
+        _verify_removal(plan)
+    except InstallationError as error:
+        raise InstallationError("verification_failed") from error
+    core, state = _removal_roots(plan)
+    return InstallationResult(
+        "verified", plan.plan_id, str(core), str(state),
+    )
+
+
 def apply_update(plan: UpdatePlan) -> InstallationResult:
     _validate_update_plan(plan)
     core = Path(plan.core_root)
@@ -921,6 +996,130 @@ def _validate_install_plan(plan: InstallPlan) -> None:
     claimed = unsigned.pop("plan_id")
     if type(claimed) is not str or claimed != _digest(_canonical_json(unsigned).encode()):
         raise InstallationError("plan_integrity_failed")
+
+
+def _validate_removal_plan(plan: RemovalPlan) -> None:
+    if plan.schema_version != INSTALL_PLAN_SCHEMA_VERSION or plan.operation != "remove":
+        raise InstallationError("unsupported_plan")
+    manifest_path = _absolute_text_path(plan.manifest_path, "invalid_plan")
+    files = tuple(_absolute_text_path(item, "invalid_plan")
+                  for item in plan.remove_files)
+    directories = tuple(_absolute_text_path(item, "invalid_plan")
+                        for item in plan.remove_directories)
+    preserved = tuple(_absolute_text_path(item, "invalid_plan")
+                      for item in plan.preserve_roots)
+    if (
+        len(set(files)) != len(files)
+        or len(set(directories)) != len(directories)
+        or len(set(preserved)) != len(preserved)
+        or manifest_path not in files
+        or not directories
+        or tuple(sorted(str(item) for item in preserved)) != plan.preserve_roots
+        or plan.preconditions != (
+            "manifest_active", "managed_files_unchanged"
+        )
+        or plan.postconditions != (
+            "managed_paths_absent", "preserved_roots_unchanged"
+        )
+    ):
+        raise InstallationError("invalid_plan")
+    core, state = _removal_roots(plan)
+    if core == state or _contains(core, state) or _contains(state, core):
+        raise InstallationError("invalid_plan")
+    if manifest_path != state / "installation.json":
+        raise InstallationError("invalid_plan")
+    for item in files:
+        if not (_contains(core, item) or _contains(state, item)):
+            raise InstallationError("invalid_plan")
+    for item in directories:
+        if item not in (core, state) and not (
+            _contains(core, item) or _contains(state, item)
+        ):
+            raise InstallationError("invalid_plan")
+    for item in preserved:
+        if any(_contains(item, owned) or _contains(owned, item)
+               for owned in (core, state)):
+            raise InstallationError("invalid_plan")
+    unsigned = asdict(plan)
+    claimed = unsigned.pop("plan_id")
+    if type(claimed) is not str or claimed != _digest(
+        _canonical_json(unsigned).encode()
+    ):
+        raise InstallationError("plan_integrity_failed")
+
+
+def _removal_roots(plan: RemovalPlan) -> tuple[Path, Path]:
+    state = Path(plan.manifest_path).parent
+    roots = [
+        Path(item) for item in plan.remove_directories
+        if not any(_contains(Path(other), Path(item))
+                   for other in plan.remove_directories if other != item)
+    ]
+    core_candidates = [item for item in roots if item != state]
+    if len(roots) != 2 or state not in roots or len(core_candidates) != 1:
+        raise InstallationError("invalid_plan")
+    return core_candidates[0], state
+
+
+def _removal_inventory(
+    manifest_path: Path,
+) -> tuple[InstallationManifest, tuple[InstallationManifest, ...]]:
+    compatibility = load_installation_manifest(manifest_path)
+    state = Path(compatibility.state_root)
+    core = Path(compatibility.core_root)
+    if manifest_path != state / "installation.json":
+        raise InstallationError("manifest_path_mismatch")
+    active = _load_active_release(state / "active.json")
+    active_manifest = _load_active_manifest(state)
+    if compatibility != active_manifest:
+        raise InstallationError("manifest_mismatch")
+    _verify_active_manifest(active, active_manifest)
+    store = _existing_root(
+        state / MANIFEST_STORE_DIRECTORY, "managed_state_invalid"
+    )
+    manifests: list[InstallationManifest] = []
+    for item in sorted(store.iterdir(), key=lambda value: value.name):
+        if _is_link_like(item) or not item.is_file() or item.suffix != ".json":
+            raise InstallationError("managed_state_invalid")
+        manifest = load_installation_manifest(item)
+        if (
+            item != _manifest_generation_path(state, manifest)
+            or manifest.core_root != str(core)
+            or manifest.state_root != str(state)
+        ):
+            raise InstallationError("managed_state_invalid")
+        _verify_release(manifest)
+        manifests.append(manifest)
+    if active_manifest not in manifests:
+        raise InstallationError("manifest_mismatch")
+    if set(state.iterdir()) != {
+        state / "active.json", state / "installation.json", store
+    }:
+        raise InstallationError("managed_paths_changed")
+    expected_core = {
+        core / manifest.release_relative_path / file.relative_path
+        for manifest in manifests for file in manifest.files
+    }
+    expected_core.update(
+        core / relative
+        for manifest in manifests
+        for relative in manifest.removable_directories
+    )
+    if set(core.rglob("*")) != expected_core:
+        raise InstallationError("managed_paths_changed")
+    return active_manifest, tuple(manifests)
+
+
+def _removal_absent(plan: RemovalPlan) -> bool:
+    return all(not Path(item).exists() and not _is_link_like(Path(item))
+               for item in (*plan.remove_files, *plan.remove_directories))
+
+
+def _verify_removal(plan: RemovalPlan) -> None:
+    if not _removal_absent(plan):
+        raise InstallationError("managed_paths_present")
+    for item in plan.preserve_roots:
+        _existing_root(item, "preserved_root_changed")
 
 
 def _make_active_release(plan: InstallPlan) -> ActiveRelease:

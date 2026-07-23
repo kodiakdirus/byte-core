@@ -29,6 +29,7 @@ from byte_core.care_github import (  # noqa: E402
 from byte_core.installation import (  # noqa: E402
     apply_installation,
     build_install_plan,
+    build_removal_plan,
     build_update_plan,
     serialize as serialize_installation_plan,
 )
@@ -573,6 +574,51 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(json.loads(applied.getvalue())["code"], "installed")
             self.assertEqual(json.loads(verified.getvalue())["code"], "verified")
+
+    @mock.patch.object(cli, "collect_check_report")
+    def test_exact_removal_plan_can_be_applied_and_verified_by_cli(
+        self, collect
+    ) -> None:
+        collect.return_value = self._report(supported=True)
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            deployment = parent / "deployment"
+            deployment.mkdir()
+            sentinel = deployment / "runbook.md"
+            sentinel.write_text("fictional\n", encoding="utf-8")
+            install = build_install_plan(
+                INSTALL_ARTIFACT, parent / "core", parent / "state", "0.1.0"
+            )
+            apply_installation(install)
+            removal = build_removal_plan(
+                parent / "state" / "installation.json",
+                preserve_roots=(str(deployment),),
+            )
+            plan_path = parent / "remove-plan.json"
+            plan_path.write_text(
+                serialize_installation_plan(removal), encoding="utf-8"
+            )
+            applied = io.StringIO()
+            verified = io.StringIO()
+
+            self.assertEqual(
+                cli.main(
+                    ["apply", "--plan", str(plan_path), "--format", "json"],
+                    stdout=applied,
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+            self.assertEqual(
+                cli.main(
+                    ["verify", "--plan", str(plan_path), "--format", "json"],
+                    stdout=verified,
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+
+            self.assertEqual(json.loads(applied.getvalue())["code"], "removed")
+            self.assertEqual(json.loads(verified.getvalue())["code"], "verified")
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "fictional\n")
 
     def test_update_plan_command_is_json_and_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

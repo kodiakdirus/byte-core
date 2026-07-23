@@ -18,17 +18,20 @@ sys.path.insert(0, str(SOURCE_ROOT))
 from byte_core.installation import (  # noqa: E402
     InstallationError,
     apply_installation,
+    apply_removal,
     apply_update,
     build_install_plan,
     build_removal_plan,
     build_update_plan,
     load_install_plan,
+    load_removal_plan,
     load_update_plan,
     load_release_descriptor,
     load_installation_manifest,
     parse_installation_manifest,
     serialize,
     verify_installation,
+    verify_removal,
     verify_update,
 )
 
@@ -318,15 +321,8 @@ class InstallationTests(unittest.TestCase):
             deployment = parent / "deployment"
             deployment.mkdir()
             plan = build_install_plan(ARTIFACT, core, state, "0.1.0")
-            for action in plan.actions:
-                target = Path(action.target)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                source = ARTIFACT / action.source_relative_path
-                shutil.copyfile(source, target)
-                target.chmod(action.mode)
-            state.mkdir()
+            apply_installation(plan)
             manifest_path = state / "installation.json"
-            manifest_path.write_text(serialize(plan.manifest), encoding="utf-8")
 
             removal = build_removal_plan(
                 manifest_path, preserve_roots=(str(deployment),)
@@ -340,6 +336,108 @@ class InstallationTests(unittest.TestCase):
                     or path.startswith(str(state.resolve()))
                     for path in removal.remove_files)
             )
+
+    def test_removal_apply_verify_and_replay_preserve_deployment(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            deployment = parent / "deployment"
+            deployment.mkdir()
+            sentinel = deployment / "manifest.toml"
+            sentinel.write_text("fictional = true\n", encoding="utf-8")
+            install = build_install_plan(
+                ARTIFACT, parent / "core", parent / "state", "0.1.0"
+            )
+            apply_installation(install)
+            removal = build_removal_plan(
+                parent / "state" / "installation.json",
+                preserve_roots=(str(deployment),),
+            )
+            plan_path = parent / "remove-plan.json"
+            plan_path.write_text(serialize(removal), encoding="utf-8")
+
+            loaded = load_removal_plan(plan_path)
+            self.assertEqual(apply_removal(loaded).code, "removed")
+            self.assertEqual(verify_removal(loaded).code, "verified")
+            self.assertEqual(apply_removal(loaded).code, "already_removed")
+            self.assertFalse((parent / "core").exists())
+            self.assertFalse((parent / "state").exists())
+            self.assertEqual(
+                sentinel.read_text(encoding="utf-8"), "fictional = true\n"
+            )
+
+    def test_removal_after_update_removes_all_verified_generations(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            _, update = self._installed_update(parent)
+            apply_update(update)
+            removal = build_removal_plan(
+                parent / "state" / "installation.json"
+            )
+
+            self.assertGreaterEqual(
+                sum(path.endswith(".json") for path in removal.remove_files), 4
+            )
+            self.assertEqual(apply_removal(removal).code, "removed")
+            self.assertFalse((parent / "core").exists())
+            self.assertFalse((parent / "state").exists())
+
+    def test_removal_refuses_unowned_core_or_state_content(self) -> None:
+        for location in ("core", "state"):
+            with (
+                self.subTest(location=location),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                parent = Path(temporary)
+                install = build_install_plan(
+                    ARTIFACT, parent / "core", parent / "state", "0.1.0"
+                )
+                apply_installation(install)
+                (parent / location / "unowned.txt").write_text(
+                    "preserve ambiguity\n", encoding="utf-8"
+                )
+                with self.assertRaisesRegex(
+                    InstallationError, "managed_paths_changed"
+                ):
+                    build_removal_plan(
+                        parent / "state" / "installation.json"
+                    )
+
+    def test_interrupted_removal_stops_with_exact_plan_for_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            deployment = parent / "deployment"
+            deployment.mkdir()
+            sentinel = deployment / "notebook.md"
+            sentinel.write_text("preserve\n", encoding="utf-8")
+            install = build_install_plan(
+                ARTIFACT, parent / "core", parent / "state", "0.1.0"
+            )
+            apply_installation(install)
+            removal = build_removal_plan(
+                parent / "state" / "installation.json",
+                preserve_roots=(str(deployment),),
+            )
+            original_unlink = Path.unlink
+            calls = 0
+
+            def interrupt(path, *args, **kwargs):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise OSError("fictional interruption")
+                return original_unlink(path, *args, **kwargs)
+
+            from unittest import mock
+            with mock.patch.object(Path, "unlink", interrupt):
+                with self.assertRaisesRegex(
+                    InstallationError, "recovery_required"
+                ):
+                    apply_removal(removal)
+
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "preserve\n")
+            self.assertTrue(any(Path(item).exists() for item in removal.remove_files))
+            with self.assertRaisesRegex(InstallationError, "plan_stale"):
+                apply_removal(removal)
 
     def test_install_apply_verify_and_exact_replay(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -514,15 +612,9 @@ class InstallationTests(unittest.TestCase):
             plan = build_install_plan(
                 ARTIFACT, parent / "core", parent / "state", "0.1.0"
             )
-            for action in plan.actions:
-                target = Path(action.target)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes((ARTIFACT / action.source_relative_path).read_bytes())
-                target.chmod(action.mode)
+            apply_installation(plan)
             state = parent / "state"
-            state.mkdir()
             manifest_path = state / "installation.json"
-            manifest_path.write_text(serialize(plan.manifest), encoding="utf-8")
             Path(plan.actions[0].target).write_text("modified", encoding="utf-8")
 
             with self.assertRaises(InstallationError) as raised:

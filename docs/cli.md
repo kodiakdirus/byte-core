@@ -97,13 +97,13 @@ Plan files contain exact local target paths and are private local artifacts. The
 
 ## Removal boundary
 
-The current bootstrap has no installed Core integration: initialization creates only deployment-owned configuration and canonical documents. Accordingly, `byte remove` currently performs a read-only preservation check. It validates the explicit deployment root, configuration schema, and canonical documents; removes nothing; and reports `core_integration_absent`.
+Deployment initialization creates only deployment-owned configuration and canonical documents. Accordingly, `byte remove --deployment-root` performs a read-only preservation check for that deployment boundary. It validates the explicit deployment root, configuration schema, and canonical documents; removes nothing; and reports `core_integration_absent`.
 
-Configuration, canonical documents, operator-added files, and unrelated content remain byte-for-byte unchanged. Missing, symbolic-link, malformed, or ambiguous deployment roots are refused. Future installation work must extend removal through an exact reviewed plan and a Core-owned installation manifest before any deletion is authorized.
+Configuration, canonical documents, operator-added files, and unrelated content remain byte-for-byte unchanged. Missing, symbolic-link, malformed, or ambiguous deployment roots are refused. Installed Core files are removed only through `byte plan remove` followed by `byte apply`.
 
 ## Installation lifecycle
 
-`byte plan install` is read-only. Its output can be passed unchanged to `byte apply` and `byte verify`. `byte plan remove` remains read-only and no destructive removal apply exists.
+`byte plan install` and `byte plan remove` are read-only. Their output can be passed unchanged to `byte apply` and `byte verify`.
 
 An install plan inventories a complete, bounded artifact tree; records each relative path, SHA-256 digest, and executable/non-executable mode; targets an immutable `releases/VERSION` directory; and embeds a checksummed installation manifest. Core and state roots are explicit, absolute, non-overlapping paths.
 
@@ -113,9 +113,11 @@ Install apply reloads and validates the bounded plan, re-scans the artifact, cre
 
 Install verification requires the exact manifest, activation metadata, release paths, hashes, and modes. Exact apply replay reports `already_installed`; conflicting existing roots are refused.
 
-A removal plan accepts only an active, integrity-valid manifest. It re-reads every managed file and refuses missing, modified, mode-changed, symbolic-link, or escaped targets. Its removal list comes exclusively from the manifest. Explicit preservation roots must not overlap Core-owned paths and are recorded as postconditions.
+A removal plan accepts only an active, integrity-valid compatibility manifest and its complete immutable manifest store. It re-reads every managed release and refuses missing, modified, mode-changed, symbolic-link, escaped, or unowned targets. Its removal list comes exclusively from those manifests. Explicit preservation roots must exist, must not overlap Core-owned paths, and are recorded as postconditions.
 
-Plan output contains exact local paths and is a private local artifact. This slice does not implement removal apply behavior, artifact signing, operating-system defaults, privilege escalation, or release provenance.
+Removal apply reloads the exact plan, rebuilds it from the still-active installation, and refuses any difference before mutation. It removes the activation marker first, then only listed files and empty directories. Exact replay succeeds only when every planned target is absent and every preservation root still exists. An interrupted removal returns `recovery_required` and refuses silent partial replay; the reviewed plan is the recovery record.
+
+Plan output contains exact local paths and is a private local artifact. This slice does not implement artifact signing, operating-system defaults, privilege escalation, or release provenance.
 
 ## Experimental update lifecycle
 

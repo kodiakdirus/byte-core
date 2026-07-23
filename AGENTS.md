@@ -66,6 +66,6 @@ Codex integration is advisory and must degrade safely. Do not parse transcripts,
 
 ## Current bootstrap boundary
 
-Byte Core has no functional release or supported installed command-line interface yet. The internal bootstrap contains experimental exact-plan initialization, installation, update, shell-integration, diagnostics, and reviewed-reporting proofs. Do not claim a supported release, remote update discovery, destructive Core removal, automatic reporting, or production-ready lifecycle behavior.
+Byte Core has no functional release or supported installed command-line interface yet. The internal bootstrap contains experimental exact-plan initialization, installation, update, removal, shell-integration, diagnostics, and reviewed-reporting proofs. Do not claim a supported release, remote update discovery, automatic reporting, or production-ready lifecycle behavior.
 
 The complete Codex integration and authority contract is documented in [`docs/codex-integration.md`](docs/codex-integration.md) under [issue #12](https://github.com/kodiakdirus/byte-core/issues/12). This file remains the durable repository safety baseline.
