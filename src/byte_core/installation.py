@@ -13,6 +13,8 @@ from typing import Any
 
 MANIFEST_SCHEMA_VERSION = 1
 INSTALL_PLAN_SCHEMA_VERSION = 1
+RELEASE_DESCRIPTOR_SCHEMA_VERSION = 1
+SUPPORTED_CONFIGURATION_SCHEMA_VERSION = 1
 MAX_ARTIFACT_FILES = 512
 MAX_ARTIFACT_FILE_BYTES = 4 * 1024 * 1024
 MAX_ARTIFACT_TOTAL_BYTES = 32 * 1024 * 1024
@@ -38,6 +40,19 @@ class ManagedFile:
     relative_path: str
     sha256: str
     mode: int
+
+
+@dataclass(frozen=True)
+class ReleaseDescriptor:
+    schema_version: int
+    core_version: str
+    configuration_schema_minimum: int
+    configuration_schema_maximum: int
+    migration: str
+    release_notes_path: str
+    files: tuple[ManagedFile, ...]
+    artifact_sha256: str
+    descriptor_sha256: str
 
 
 @dataclass(frozen=True)
@@ -111,6 +126,7 @@ class UpdatePlan:
     state_root: str
     from_version: str
     to_version: str
+    release_descriptor_sha256: str
     current_manifest_sha256: str
     actions: tuple[InstallAction, ...]
     next_manifest: InstallationManifest
@@ -251,7 +267,6 @@ def build_removal_plan(
 def build_update_plan(
     manifest_path: str | os.PathLike[str],
     artifact_root: str | os.PathLike[str],
-    core_version: str,
 ) -> UpdatePlan:
     path = _regular_file(manifest_path, "manifest_read_error")
     compatibility = load_installation_manifest(path)
@@ -265,12 +280,12 @@ def build_update_plan(
     _verify_active_manifest(active, current)
     _verify_release(current)
 
-    if not _VERSION.fullmatch(core_version):
-        raise InstallationError("invalid_core_version")
+    artifact = _existing_root(artifact_root, "invalid_artifact_root")
+    descriptor = load_release_descriptor(artifact / "release.json")
+    files = _scan_release_artifact(artifact, descriptor)
+    core_version = descriptor.core_version
     if _version_tuple(core_version) <= _version_tuple(current.core_version):
         raise InstallationError("update_version_not_newer")
-    artifact = _existing_root(artifact_root, "invalid_artifact_root")
-    files = _scan_artifact(artifact)
     release_relative = f"releases/{core_version}"
     release_root = Path(current.core_root) / release_relative
     if _is_link_like(release_root) or release_root.exists():
@@ -312,6 +327,7 @@ def build_update_plan(
         "state_root": current.state_root,
         "from_version": current.core_version,
         "to_version": core_version,
+        "release_descriptor_sha256": descriptor.descriptor_sha256,
         "current_manifest_sha256": current.manifest_sha256,
         "actions": [asdict(item) for item in actions],
         "next_manifest": asdict(next_manifest),
@@ -321,6 +337,7 @@ def build_update_plan(
         "preconditions": [
             "current_installation_verified",
             "new_release_absent",
+            "release_descriptor_verified",
             "artifact_hashes_match",
         ],
         "postconditions": [
@@ -342,6 +359,7 @@ def build_update_plan(
         current.state_root,
         current.core_version,
         core_version,
+        descriptor.descriptor_sha256,
         current.manifest_sha256,
         actions,
         next_manifest,
@@ -353,6 +371,47 @@ def build_update_plan(
         tuple(unsigned["backout"]),
         _digest(_canonical_json(unsigned).encode()),
     )
+
+
+def load_release_descriptor(
+    path: str | os.PathLike[str],
+) -> ReleaseDescriptor:
+    descriptor_path = _regular_file(path, "release_descriptor_read_error")
+    try:
+        raw = json.loads(
+            _read_bounded(descriptor_path, MAX_MANIFEST_BYTES).decode("utf-8")
+        )
+    except InstallationError:
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise InstallationError("invalid_release_descriptor") from error
+    keys = {
+        "schema_version", "core_version", "configuration_schema_minimum",
+        "configuration_schema_maximum", "migration", "release_notes_path",
+        "files", "artifact_sha256", "descriptor_sha256",
+    }
+    if type(raw) is not dict or set(raw) != keys or type(raw["files"]) is not list:
+        raise InstallationError("invalid_release_descriptor")
+    try:
+        files = tuple(
+            ManagedFile(item["relative_path"], item["sha256"], item["mode"])
+            for item in raw["files"]
+            if type(item) is dict
+            and set(item) == {"relative_path", "sha256", "mode"}
+        )
+        descriptor = ReleaseDescriptor(
+            raw["schema_version"], raw["core_version"],
+            raw["configuration_schema_minimum"],
+            raw["configuration_schema_maximum"], raw["migration"],
+            raw["release_notes_path"], files, raw["artifact_sha256"],
+            raw["descriptor_sha256"],
+        )
+    except (KeyError, TypeError) as error:
+        raise InstallationError("invalid_release_descriptor") from error
+    if len(files) != len(raw["files"]):
+        raise InstallationError("invalid_release_descriptor")
+    _validate_release_descriptor(descriptor)
+    return descriptor
 
 
 def load_installation_manifest(
@@ -451,7 +510,8 @@ def load_update_plan(path: str | os.PathLike[str]) -> UpdatePlan:
     keys = {
         "schema_version", "operation", "manifest_path", "artifact_root",
         "core_root", "state_root", "from_version", "to_version",
-        "current_manifest_sha256", "actions", "next_manifest", "activation",
+        "release_descriptor_sha256", "current_manifest_sha256",
+        "actions", "next_manifest", "activation",
         "backout_release_relative_path", "backout_manifest_sha256",
         "preconditions", "postconditions", "backout", "plan_id",
     }
@@ -485,6 +545,7 @@ def load_update_plan(path: str | os.PathLike[str]) -> UpdatePlan:
             raw["schema_version"], raw["operation"], raw["manifest_path"],
             raw["artifact_root"], raw["core_root"], raw["state_root"],
             raw["from_version"], raw["to_version"],
+            raw["release_descriptor_sha256"],
             raw["current_manifest_sha256"], actions,
             parse_installation_manifest(raw["next_manifest"]), activation,
             raw["backout_release_relative_path"],
@@ -633,7 +694,15 @@ def apply_update(plan: UpdatePlan) -> InstallationResult:
         )
 
     artifact = _existing_root(plan.artifact_root, "invalid_artifact_root")
-    if _scan_artifact(artifact) != plan.next_manifest.files:
+    try:
+        descriptor = load_release_descriptor(artifact / "release.json")
+        scanned = _scan_release_artifact(artifact, descriptor)
+    except InstallationError as error:
+        raise InstallationError("artifact_changed") from error
+    if (
+        descriptor.descriptor_sha256 != plan.release_descriptor_sha256
+        or scanned != plan.next_manifest.files
+    ):
         raise InstallationError("artifact_changed")
     active_path = state / "active.json"
     compatibility_path = state / "installation.json"
@@ -774,6 +843,7 @@ def serialize(
         InstallPlan
         | RemovalPlan
         | UpdatePlan
+        | ReleaseDescriptor
         | InstallationManifest
         | ActiveRelease
     ),
@@ -857,6 +927,7 @@ def _validate_update_plan(plan: UpdatePlan) -> None:
             type(value) is not str
             for value in (
                 plan.manifest_path, plan.from_version, plan.to_version,
+                plan.release_descriptor_sha256,
                 plan.current_manifest_sha256,
                 plan.activation.current_metadata_sha256,
                 plan.activation.next_core_version,
@@ -881,6 +952,7 @@ def _validate_update_plan(plan: UpdatePlan) -> None:
             "$plan_id",
         )
         or plan.current_manifest_sha256 != plan.backout_manifest_sha256
+        or not _DIGEST.fullmatch(plan.release_descriptor_sha256)
         or not _DIGEST.fullmatch(plan.current_manifest_sha256)
         or not _DIGEST.fullmatch(plan.activation.current_metadata_sha256)
         or not _VERSION.fullmatch(plan.from_version)
@@ -1299,6 +1371,21 @@ def _validate_manifest(manifest: InstallationManifest) -> None:
 
 
 def _scan_artifact(root: Path) -> tuple[ManagedFile, ...]:
+    return _scan_artifact_excluding(root, ())
+
+
+def _scan_release_artifact(
+    root: Path, descriptor: ReleaseDescriptor
+) -> tuple[ManagedFile, ...]:
+    files = _scan_artifact_excluding(root, ("release.json",))
+    if files != descriptor.files:
+        raise InstallationError("release_artifact_mismatch")
+    return files
+
+
+def _scan_artifact_excluding(
+    root: Path, excluded: tuple[str, ...]
+) -> tuple[ManagedFile, ...]:
     paths = sorted(root.rglob("*"), key=lambda item: item.as_posix())
     if len(paths) > MAX_ARTIFACT_FILES:
         raise InstallationError("artifact_too_many_entries")
@@ -1316,12 +1403,79 @@ def _scan_artifact(root: Path) -> tuple[ManagedFile, ...]:
         if total > MAX_ARTIFACT_TOTAL_BYTES:
             raise InstallationError("artifact_too_large")
         relative = path.relative_to(root).as_posix()
+        if relative in excluded:
+            continue
         _safe_relative(relative)
         mode = 0o700 if path.stat().st_mode & stat.S_IXUSR else 0o600
         files.append(ManagedFile(relative, _digest(data), mode))
     if not files:
         raise InstallationError("artifact_empty")
     return tuple(files)
+
+
+def _validate_release_descriptor(descriptor: ReleaseDescriptor) -> None:
+    if (
+        type(descriptor.schema_version) is not int
+        or descriptor.schema_version != RELEASE_DESCRIPTOR_SCHEMA_VERSION
+    ):
+        raise InstallationError("unsupported_release_descriptor")
+    if (
+        type(descriptor.core_version) is not str
+        or not _VERSION.fullmatch(descriptor.core_version)
+        or type(descriptor.configuration_schema_minimum) is not int
+        or type(descriptor.configuration_schema_maximum) is not int
+        or descriptor.configuration_schema_minimum < 1
+        or descriptor.configuration_schema_maximum
+        < descriptor.configuration_schema_minimum
+        or type(descriptor.migration) is not str
+        or type(descriptor.release_notes_path) is not str
+        or type(descriptor.artifact_sha256) is not str
+        or not _DIGEST.fullmatch(descriptor.artifact_sha256)
+    ):
+        raise InstallationError("invalid_release_descriptor")
+    try:
+        notes = _safe_relative(descriptor.release_notes_path).as_posix()
+    except InstallationError as error:
+        raise InstallationError("invalid_release_descriptor") from error
+    seen: set[str] = set()
+    for item in descriptor.files:
+        try:
+            relative = _safe_relative(item.relative_path).as_posix()
+        except InstallationError as error:
+            raise InstallationError("invalid_release_descriptor") from error
+        if (
+            relative == "release.json"
+            or relative in seen
+            or type(item.sha256) is not str
+            or not _DIGEST.fullmatch(item.sha256)
+            or type(item.mode) is not int
+            or item.mode not in (0o600, 0o700)
+        ):
+            raise InstallationError("invalid_release_descriptor")
+        seen.add(relative)
+    if notes not in seen:
+        raise InstallationError("release_notes_missing")
+    expected_artifact = _digest(
+        _canonical_json([asdict(item) for item in descriptor.files]).encode()
+    )
+    if descriptor.artifact_sha256 != expected_artifact:
+        raise InstallationError("release_artifact_integrity_failed")
+    unsigned = asdict(descriptor)
+    claimed = unsigned.pop("descriptor_sha256")
+    if (
+        type(claimed) is not str
+        or not _DIGEST.fullmatch(claimed)
+        or claimed != _digest(_canonical_json(unsigned).encode())
+    ):
+        raise InstallationError("release_descriptor_integrity_failed")
+    if not (
+        descriptor.configuration_schema_minimum
+        <= SUPPORTED_CONFIGURATION_SCHEMA_VERSION
+        <= descriptor.configuration_schema_maximum
+    ):
+        raise InstallationError("incompatible_release")
+    if descriptor.migration != "none":
+        raise InstallationError("unsupported_release_migration")
 
 
 def _require_matching_file(path: Path, item: ManagedFile) -> None:

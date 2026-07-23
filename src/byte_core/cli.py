@@ -114,7 +114,6 @@ def build_parser() -> argparse.ArgumentParser:
     plan_update = plan_operations.add_parser("update")
     plan_update.add_argument("--manifest", required=True)
     plan_update.add_argument("--artifact-root", required=True)
-    plan_update.add_argument("--core-version", required=True)
 
     for name in ("apply", "verify"):
         command = commands.add_parser(name, help=f"{name} an exact plan")
@@ -263,7 +262,6 @@ def main(
                 update_plan = build_update_plan(
                     arguments.manifest,
                     arguments.artifact_root,
-                    arguments.core_version,
                 )
                 output.write(serialize_installation_plan(update_plan))
             return ExitStatus.SUCCESS

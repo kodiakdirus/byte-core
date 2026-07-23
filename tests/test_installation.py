@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import sys
@@ -11,6 +12,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = REPOSITORY_ROOT / "src"
 FIXTURES = REPOSITORY_ROOT / "tests" / "fixtures" / "installation"
 ARTIFACT = FIXTURES / "artifact"
+RELEASES = FIXTURES / "releases"
 sys.path.insert(0, str(SOURCE_ROOT))
 
 from byte_core.installation import (  # noqa: E402
@@ -22,6 +24,7 @@ from byte_core.installation import (  # noqa: E402
     build_update_plan,
     load_install_plan,
     load_update_plan,
+    load_release_descriptor,
     load_installation_manifest,
     parse_installation_manifest,
     serialize,
@@ -31,20 +34,75 @@ from byte_core.installation import (  # noqa: E402
 
 
 class InstallationTests(unittest.TestCase):
+    def test_release_descriptors_bind_two_offline_fixtures(self) -> None:
+        first = load_release_descriptor(RELEASES / "0.1.0" / "release.json")
+        second = load_release_descriptor(RELEASES / "0.2.0" / "release.json")
+
+        self.assertEqual(first.core_version, "0.1.0")
+        self.assertEqual(second.core_version, "0.2.0")
+        self.assertEqual(first.migration, "none")
+        self.assertEqual(second.release_notes_path, "RELEASE_NOTES.md")
+        self.assertNotEqual(first.descriptor_sha256, second.descriptor_sha256)
+        self.assertNotIn("release.json", {item.relative_path for item in second.files})
+
+    def test_release_descriptor_refuses_tampering_and_incompatibility(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = RELEASES / "0.2.0" / "release.json"
+            descriptor = root / "release.json"
+            raw = json.loads(source.read_text(encoding="utf-8"))
+            raw["core_version"] = "9.9.9"
+            descriptor.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaisesRegex(
+                InstallationError, "release_descriptor_integrity_failed"
+            ):
+                load_release_descriptor(descriptor)
+
+            raw = json.loads(source.read_text(encoding="utf-8"))
+            raw["configuration_schema_minimum"] = 2
+            raw["configuration_schema_maximum"] = 2
+            raw["descriptor_sha256"] = _descriptor_checksum(raw)
+            descriptor.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaisesRegex(InstallationError, "incompatible_release"):
+                load_release_descriptor(descriptor)
+
+            raw = json.loads(source.read_text(encoding="utf-8"))
+            raw["migration"] = "required"
+            raw["descriptor_sha256"] = _descriptor_checksum(raw)
+            descriptor.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaisesRegex(
+                InstallationError, "unsupported_release_migration"
+            ):
+                load_release_descriptor(descriptor)
+
+    def test_update_planning_refuses_release_payload_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            install = build_install_plan(
+                ARTIFACT, parent / "core", parent / "state", "0.1.0"
+            )
+            apply_installation(install)
+            release = parent / "release"
+            shutil.copytree(RELEASES / "0.2.0", release)
+            (release / "share" / "README.txt").write_text(
+                "changed without a descriptor update\n", encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(
+                InstallationError, "release_artifact_mismatch"
+            ):
+                build_update_plan(
+                    parent / "state" / "installation.json", release
+                )
+
     def _installed_update(self, parent: Path):
         install = build_install_plan(
             ARTIFACT, parent / "core", parent / "state", "0.1.0"
         )
         apply_installation(install)
-        update_artifact = parent / "update-artifact"
-        shutil.copytree(ARTIFACT, update_artifact)
-        (update_artifact / "share" / "README.txt").write_text(
-            "fictional Byte update\n", encoding="utf-8"
-        )
         update = build_update_plan(
             parent / "state" / "installation.json",
-            update_artifact,
-            "0.2.0",
+            RELEASES / "0.2.0",
         )
         return install, update
 
@@ -75,6 +133,25 @@ class InstallationTests(unittest.TestCase):
             )
             self.assertFalse((state / "operations").exists())
 
+    def test_update_apply_preserves_deployment_owned_tree_byte_for_byte(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            deployment = parent / "deployment"
+            (deployment / "config").mkdir(parents=True)
+            (deployment / "docs").mkdir()
+            (deployment / "config" / "deployment.toml").write_bytes(
+                b"schema_version = 1\n"
+            )
+            (deployment / "docs" / "runbook.md").write_bytes(
+                b"# Fictional operator runbook\n"
+            )
+            before = _tree_snapshot(deployment)
+            _, update = self._installed_update(parent)
+
+            apply_update(update)
+
+            self.assertEqual(_tree_snapshot(deployment), before)
+
     def test_update_plan_loader_rejects_tampering(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             parent = Path(temporary)
@@ -94,7 +171,12 @@ class InstallationTests(unittest.TestCase):
             parent = Path(temporary)
             _, update = self._installed_update(parent)
             before = (parent / "state" / "active.json").read_bytes()
-            (Path(update.artifact_root) / "share" / "README.txt").write_text(
+            artifact = parent / "changed-release"
+            shutil.copytree(Path(update.artifact_root), artifact)
+            update = build_update_plan(
+                parent / "state" / "installation.json", artifact
+            )
+            (artifact / "share" / "README.txt").write_text(
                 "changed after approval\n", encoding="utf-8"
             )
 
@@ -515,18 +597,14 @@ class InstallationTests(unittest.TestCase):
             deployment.mkdir()
             sentinel = deployment / "operator-notes.txt"
             sentinel.write_text("fictional deployment content\n", encoding="utf-8")
-            artifact = parent / "artifact-0.2.0"
-            shutil.copytree(ARTIFACT, artifact)
-            (artifact / "share" / "README.txt").write_text(
-                "fictional update artifact\n", encoding="utf-8"
-            )
+            artifact = RELEASES / "0.2.0"
             before = _tree_snapshot(parent)
 
             first = build_update_plan(
-                parent / "state" / "installation.json", artifact, "0.2.0"
+                parent / "state" / "installation.json", artifact
             )
             second = build_update_plan(
-                parent / "state" / "installation.json", artifact, "0.2.0"
+                parent / "state" / "installation.json", artifact
             )
 
             self.assertEqual(first, second)
@@ -554,7 +632,7 @@ class InstallationTests(unittest.TestCase):
 
             with self.assertRaises(InstallationError) as raised:
                 build_update_plan(
-                    parent / "state" / "installation.json", ARTIFACT, "0.2.0"
+                    parent / "state" / "installation.json", RELEASES / "0.2.0"
                 )
 
             self.assertEqual(raised.exception.code, "managed_file_modified")
@@ -567,18 +645,24 @@ class InstallationTests(unittest.TestCase):
             )
             apply_installation(install)
             manifest = parent / "state" / "installation.json"
-            for version in ("0.2.0", "0.1.9"):
+            for version in ("0.2.0", "0.1.0"):
                 with self.subTest(version=version):
                     with self.assertRaises(InstallationError) as raised:
-                        build_update_plan(manifest, ARTIFACT, version)
+                        build_update_plan(manifest, RELEASES / version)
                     self.assertEqual(
                         raised.exception.code, "update_version_not_newer"
                     )
 
-            existing = parent / "core" / "releases" / "0.3.0"
+            parent = Path(temporary)
+            install = build_install_plan(
+                ARTIFACT, parent / "other-core", parent / "other-state", "0.1.0"
+            )
+            apply_installation(install)
+            manifest = parent / "other-state" / "installation.json"
+            existing = parent / "other-core" / "releases" / "0.2.0"
             existing.mkdir()
             with self.assertRaises(InstallationError) as raised:
-                build_update_plan(manifest, ARTIFACT, "0.3.0")
+                build_update_plan(manifest, RELEASES / "0.2.0")
             self.assertEqual(raised.exception.code, "target_exists")
 
     def test_update_plan_refuses_tampered_active_metadata(self) -> None:
@@ -595,7 +679,7 @@ class InstallationTests(unittest.TestCase):
 
             with self.assertRaises(InstallationError) as raised:
                 build_update_plan(
-                    parent / "state" / "installation.json", ARTIFACT, "0.2.0"
+                    parent / "state" / "installation.json", RELEASES / "0.2.0"
                 )
             self.assertEqual(raised.exception.code, "active_integrity_failed")
 
@@ -609,6 +693,13 @@ def _tree_snapshot(root: Path) -> tuple[tuple[str, str, int], ...]:
         else:
             snapshot.append((relative, "directory", path.stat().st_mode))
     return tuple(snapshot)
+
+
+def _descriptor_checksum(raw: dict) -> str:
+    unsigned = dict(raw)
+    unsigned.pop("descriptor_sha256", None)
+    canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 if __name__ == "__main__":

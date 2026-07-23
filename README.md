@@ -31,7 +31,7 @@ Ignored files remain private local state, not safe storage for secrets. Ignore r
 
 At this bootstrap stage, Byte Core provides its public repository foundation, Apache License 2.0 licensing, initial repository-security baseline, a documented [configuration and ownership contract](docs/configuration.md), and a [canonical deployment-document contract](docs/canonical-documents.md). TOML 1.0 and Python 3.11 are the initial minimum configuration-format and runtime baseline; Python 3.11 through 3.14 form the current CI target.
 
-The repository also contains an internal, read-only layered configuration resolver, canonical document validator, neutral starter templates, an [installation lifecycle contract](docs/installation.md), experimental exact-plan install and update apply and verification proofs, a read-only removal planner, and tests. These are experimental implementation proofs, not stable public APIs or supported user-facing tools.
+The repository also contains an internal, read-only layered configuration resolver, canonical document validator, neutral starter templates, an [installation lifecycle contract](docs/installation.md), checksummed local release descriptors, experimental exact-plan install and update apply and verification proofs, a read-only removal planner, and tests. These are experimental implementation proofs, not stable public APIs or supported user-facing tools.
 
 The repository includes experimental `byte check` and initial deployment planning, initialization, application, and verification proofs. They are not yet packaged or installed as a supported public CLI. There is no installer, update, removal, shell integration, functional release, or supported operational deployment yet.
 

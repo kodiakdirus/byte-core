@@ -12,7 +12,7 @@ byte check [--format text|json]
 byte init --deployment-root ABSOLUTE_PATH
 byte plan init --deployment-root ABSOLUTE_PATH
 byte plan install --artifact-root ABSOLUTE_PATH --core-root ABSOLUTE_PATH --state-root ABSOLUTE_PATH --core-version VERSION
-byte plan update --manifest ABSOLUTE_PATH --artifact-root ABSOLUTE_PATH --core-version NEWER_VERSION
+byte plan update --manifest ABSOLUTE_PATH --artifact-root ABSOLUTE_PATH
 byte plan remove --manifest ABSOLUTE_PATH [--preserve-root ABSOLUTE_PATH]
 byte apply --plan PLAN.json [--format text|json]
 byte verify --plan PLAN.json [--format text|json]
@@ -114,13 +114,13 @@ Plan output contains exact local paths and is a private local artifact. This sli
 
 ## Experimental update lifecycle
 
-`byte plan update` is read-only. It requires a fully verified active installation and a strictly newer semantic version, inventories the new artifact into a fresh immutable release target, and records the exact manifest and activation transition. The existing release is preserved as the backout target. Dirty Core files, altered activation state, existing target releases, same-version replacement, and downgrade requests are refused.
+`byte plan update` is read-only. It requires a fully verified active installation and a local artifact containing a valid `release.json`. The descriptor—not a caller-supplied version—binds the strictly newer Core version, supported configuration-schema range, explicit migration status, release-notes path, complete file inventory, artifact checksum, and descriptor checksum. The planner inventories those files into a fresh immutable release target and records the descriptor checksum, exact manifest, and activation transition. The existing release is preserved as the backout target. Dirty Core files, altered activation state, missing or changed release content, incompatible schemas, undeclared migrations, existing target releases, same-version replacement, and downgrade requests are refused.
 
 The planner never reads or writes deployment-owned content. An exact update plan may be passed to `byte apply` and `byte verify`. Apply re-verifies both artifacts, creates and verifies the new release, preserves checksum-addressed current and next manifests, re-verifies the backout release, and atomically replaces `active.json` as the commit point. `installation.json` is only a compatibility copy.
 
 Before activation, failure cleanup removes only unchanged paths created by the invocation. After activation, Byte restores the prior activation only when the attempted activation is unchanged and the prior immutable manifest and release still verify; it preserves the new release. Any ambiguity returns recovery-required with the operation journal intact.
 
-This proof does not migrate configuration, fetch or authenticate releases, garbage-collect releases, or implement the reserved top-level `byte update`. It is not a supported installed command-line interface.
+The descriptor and artifact checksums detect mismatch and accidental modification; they do not authenticate publisher identity. This proof does not migrate configuration, fetch releases, verify signatures or tag provenance, garbage-collect releases, or implement the reserved top-level `byte update`. It is not a supported installed command-line interface.
 
 ## Reserved lifecycle behavior
 

@@ -14,6 +14,10 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = REPOSITORY_ROOT / "src"
 LAUNCHER = REPOSITORY_ROOT / "bin" / "byte"
 INSTALL_ARTIFACT = REPOSITORY_ROOT / "tests" / "fixtures" / "installation" / "artifact"
+UPDATE_RELEASE = (
+    REPOSITORY_ROOT / "tests" / "fixtures" / "installation"
+    / "releases" / "0.2.0"
+)
 sys.path.insert(0, str(SOURCE_ROOT))
 
 from byte_core import cli  # noqa: E402
@@ -259,8 +263,7 @@ class CliTests(unittest.TestCase):
                 [
                     "plan", "update",
                     "--manifest", str(parent / "state" / "installation.json"),
-                    "--artifact-root", str(INSTALL_ARTIFACT),
-                    "--core-version", "0.2.0",
+                    "--artifact-root", str(UPDATE_RELEASE),
                 ],
                 stdout=output,
             )
@@ -290,20 +293,13 @@ class CliTests(unittest.TestCase):
                 "0.1.0",
             )
             apply_installation(install)
-            artifact = parent / "update-artifact"
-            import shutil
-            shutil.copytree(INSTALL_ARTIFACT, artifact)
-            (artifact / "share" / "README.txt").write_text(
-                "fictional update\n", encoding="utf-8"
-            )
             planned = io.StringIO()
             self.assertEqual(
                 cli.main(
                     [
                         "plan", "update",
                         "--manifest", str(parent / "state" / "installation.json"),
-                        "--artifact-root", str(artifact),
-                        "--core-version", "0.2.0",
+                        "--artifact-root", str(UPDATE_RELEASE),
                     ],
                     stdout=planned,
                 ),
