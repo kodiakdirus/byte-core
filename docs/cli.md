@@ -19,6 +19,11 @@ byte verify --plan PLAN.json [--format text|json]
 byte update --check --manifest ABSOLUTE_PATH --artifact-root ABSOLUTE_PATH [--format text|json]
 byte update --plan --manifest ABSOLUTE_PATH --artifact-root ABSOLUTE_PATH
 byte update --apply PLAN.json
+byte shell plan --home-root ABSOLUTE_PATH --shell bash|zsh --shell-script ABSOLUTE_PATH [--syntax-highlighting ABSOLUTE_PATH]
+byte shell apply --plan PLAN.json [--format text|json]
+byte shell verify --plan PLAN.json [--format text|json]
+byte shell plan-remove --home-root ABSOLUTE_PATH --shell bash|zsh
+byte shell remove --plan PLAN.json [--format text|json]
 byte remove --deployment-root ABSOLUTE_PATH [--format text|json]
 
 # Reserved; not implemented
@@ -135,5 +140,13 @@ The descriptor and artifact checksums detect mismatch and accidental modificatio
 ## Reserved lifecycle behavior
 
 - `doctor` will construct minimal local diagnostics under the privacy contract.
+
+## Optional shell lifecycle
+
+The `byte shell` namespace applies the same separation to Bash and Zsh profile integration. `plan` and `plan-remove` are read-only and emit exact private-local JSON plans. `apply`, `verify`, and `remove` load those plans without guessing a home directory or profile.
+
+Apply and remove preserve unrelated profile content, use distinct recoverable backups, retain the original profile mode, and refuse changes made after planning. Exact replay is idempotent. A malformed, duplicate, stale, missing, or linked managed block is refused.
+
+Zsh syntax highlighting is included only when the operator supplies `--syntax-highlighting` during planning. Byte does not require Zsh on Linux, install packages, modify the login shell, or add syntax highlighting implicitly. The full boundary is documented in the [shell-integration contract](shell-integration.md).
 
 These reserved descriptions do not imply implementation.

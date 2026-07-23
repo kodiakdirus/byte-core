@@ -38,6 +38,15 @@ from .installation import (
     verify_installation,
     verify_update,
 )
+from .shell_integration import (
+    ShellIntegrationError,
+    apply_shell_plan,
+    build_shell_install_plan,
+    build_shell_removal_plan,
+    load_shell_plan,
+    serialize_shell_plan,
+    verify_shell_plan,
+)
 
 
 class ExitStatus(IntEnum):
@@ -149,6 +158,27 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument("--manifest")
     update.add_argument("--artifact-root")
     update.add_argument("--format", choices=("text", "json"), default="text")
+    shell = commands.add_parser(
+        "shell", help="plan and manage optional Bash or Zsh integration"
+    )
+    shell_operations = shell.add_subparsers(dest="shell_operation", required=True)
+    shell_plan = shell_operations.add_parser("plan")
+    shell_plan.add_argument("--home-root", required=True)
+    shell_plan.add_argument("--shell", dest="shell_name", choices=("bash", "zsh"),
+                            required=True)
+    shell_plan.add_argument("--shell-script", required=True)
+    shell_plan.add_argument("--syntax-highlighting")
+    shell_plan_remove = shell_operations.add_parser("plan-remove")
+    shell_plan_remove.add_argument("--home-root", required=True)
+    shell_plan_remove.add_argument(
+        "--shell", dest="shell_name", choices=("bash", "zsh"), required=True
+    )
+    for name in ("apply", "verify", "remove"):
+        shell_action = shell_operations.add_parser(name)
+        shell_action.add_argument("--plan", required=True)
+        shell_action.add_argument(
+            "--format", choices=("text", "json"), default="text"
+        )
     commands.add_parser("doctor", help="reserved; not implemented")
     return parser
 
@@ -400,6 +430,33 @@ def main(
             verify_update(active_plan)
             output.write(_format_lifecycle_result(result, arguments.format))
             return ExitStatus.SUCCESS
+        if arguments.command == "shell":
+            if arguments.shell_operation == "plan":
+                active_plan = build_shell_install_plan(
+                    arguments.home_root,
+                    arguments.shell_name,
+                    arguments.shell_script,
+                    arguments.syntax_highlighting,
+                )
+                output.write(serialize_shell_plan(active_plan))
+                return ExitStatus.SUCCESS
+            if arguments.shell_operation == "plan-remove":
+                active_plan = build_shell_removal_plan(
+                    arguments.home_root, arguments.shell_name
+                )
+                output.write(serialize_shell_plan(active_plan))
+                return ExitStatus.SUCCESS
+            active_plan = load_shell_plan(arguments.plan)
+            if arguments.shell_operation == "verify":
+                result = verify_shell_plan(active_plan)
+            else:
+                readiness = collect_check_report()
+                if not readiness.supported:
+                    output.write(_format_text(readiness))
+                    return ExitStatus.UNSUPPORTED
+                result = apply_shell_plan(active_plan)
+            output.write(_format_lifecycle_result(result, arguments.format))
+            return ExitStatus.SUCCESS
         if arguments.command != "check":
             errors.write("byte: command is not implemented\n")
             return ExitStatus.UNSUPPORTED
@@ -450,6 +507,26 @@ def main(
         if error.code == "verification_failed":
             return ExitStatus.VERIFICATION_FAILED
         if error.code in {"target_exists", "target_link_forbidden"}:
+            return ExitStatus.REFUSED
+        if error.code == "apply_failed":
+            return ExitStatus.INTERNAL_ERROR
+        return ExitStatus.INVALID_INPUT
+    except ShellIntegrationError as error:
+        errors.write(f"byte: {error.code}\n")
+        if error.code == "recovery_required":
+            if active_plan is not None:
+                errors.write(
+                    "byte: preserve the shell profile and exact backup for "
+                    f"plan {active_plan.plan_id}\n"
+                )
+            return ExitStatus.RECOVERY_REQUIRED
+        if error.code == "verification_failed":
+            return ExitStatus.VERIFICATION_FAILED
+        if error.code in {
+            "profile_changed", "managed_block_conflict",
+            "malformed_managed_block", "managed_block_mismatch",
+            "backup_exists", "backup_directory_invalid",
+        }:
             return ExitStatus.REFUSED
         if error.code == "apply_failed":
             return ExitStatus.INTERNAL_ERROR

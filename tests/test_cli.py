@@ -18,6 +18,7 @@ UPDATE_RELEASE = (
     REPOSITORY_ROOT / "tests" / "fixtures" / "installation"
     / "releases" / "0.2.0"
 )
+SHELL_SCRIPT = REPOSITORY_ROOT / "shell" / "byte-shell.sh"
 sys.path.insert(0, str(SOURCE_ROOT))
 
 from byte_core import cli  # noqa: E402
@@ -511,6 +512,72 @@ class CliTests(unittest.TestCase):
         self.assertEqual(status, cli.ExitStatus.INTERNAL_ERROR)
         self.assertEqual(errors.getvalue(), "byte: internal error\n")
         self.assertNotIn(private_detail, errors.getvalue())
+
+    @mock.patch.object(cli, "collect_check_report")
+    def test_shell_cli_plans_applies_verifies_and_removes(self, collect) -> None:
+        collect.return_value = self._report(supported=True)
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            profile = home / ".bashrc"
+            original = b"# fictional operator profile\n"
+            profile.write_bytes(original)
+            install_plan_path = home / "shell-install.json"
+            planned = io.StringIO()
+            self.assertEqual(
+                cli.main(
+                    [
+                        "shell", "plan",
+                        "--home-root", str(home),
+                        "--shell", "bash",
+                        "--shell-script", str(SHELL_SCRIPT),
+                    ],
+                    stdout=planned,
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+            install_plan_path.write_text(planned.getvalue(), encoding="utf-8")
+            applied = io.StringIO()
+            self.assertEqual(
+                cli.main(
+                    [
+                        "shell", "apply", "--plan", str(install_plan_path),
+                        "--format", "json",
+                    ],
+                    stdout=applied,
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+            self.assertEqual(json.loads(applied.getvalue())["code"], "integrated")
+            self.assertEqual(
+                cli.main(
+                    ["shell", "verify", "--plan", str(install_plan_path)],
+                    stdout=io.StringIO(),
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+
+            removal_plan_path = home / "shell-remove.json"
+            removal = io.StringIO()
+            self.assertEqual(
+                cli.main(
+                    [
+                        "shell", "plan-remove",
+                        "--home-root", str(home),
+                        "--shell", "bash",
+                    ],
+                    stdout=removal,
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+            removal_plan_path.write_text(removal.getvalue(), encoding="utf-8")
+            self.assertEqual(
+                cli.main(
+                    ["shell", "remove", "--plan", str(removal_plan_path)],
+                    stdout=io.StringIO(),
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+            self.assertEqual(profile.read_bytes(), original)
 
     def test_collect_report_uses_safe_bounded_values(self) -> None:
         completed = subprocess.CompletedProcess(

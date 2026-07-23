@@ -22,7 +22,7 @@ Byte Core is pre-alpha software without a supported functional release. This mat
 - Python 3.11 through 3.14 are the initial CI matrix. Python 3.11 is the minimum runtime; later Python 3 versions are not claimed until exercised by CI.
 - Git must be available as `git` and return a parseable dotted numeric version. Byte Core does not yet depend on a narrower Git feature-version floor.
 - The launcher requires a POSIX process environment and `/bin/sh` behavior. Bash is exercised on every supported host. Zsh is exercised on supported macOS runners, where it is native; Linux users may choose to install Zsh independently, but Byte does not require or install it.
-- Shell enhancements such as syntax highlighting are optional. Their future installation, configuration, and removal require an explicit user choice and belong to the reviewed shell-integration lifecycle rather than host prerequisite checks.
+- Shell enhancements such as syntax highlighting are optional. The experimental shell lifecycle includes them only when a Zsh user supplies an explicit existing source file. Byte does not make them a prerequisite or install the package.
 - Runtime operation is standard-library-first and offline. CI action setup may access GitHub infrastructure; Byte lifecycle commands do not require network access.
 
 ## Evidence boundary
