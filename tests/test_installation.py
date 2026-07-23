@@ -16,18 +16,179 @@ sys.path.insert(0, str(SOURCE_ROOT))
 from byte_core.installation import (  # noqa: E402
     InstallationError,
     apply_installation,
+    apply_update,
     build_install_plan,
     build_removal_plan,
     build_update_plan,
     load_install_plan,
+    load_update_plan,
     load_installation_manifest,
     parse_installation_manifest,
     serialize,
     verify_installation,
+    verify_update,
 )
 
 
 class InstallationTests(unittest.TestCase):
+    def _installed_update(self, parent: Path):
+        install = build_install_plan(
+            ARTIFACT, parent / "core", parent / "state", "0.1.0"
+        )
+        apply_installation(install)
+        update_artifact = parent / "update-artifact"
+        shutil.copytree(ARTIFACT, update_artifact)
+        (update_artifact / "share" / "README.txt").write_text(
+            "fictional Byte update\n", encoding="utf-8"
+        )
+        update = build_update_plan(
+            parent / "state" / "installation.json",
+            update_artifact,
+            "0.2.0",
+        )
+        return install, update
+
+    def test_update_apply_is_atomic_verifiable_and_replay_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            install, update = self._installed_update(parent)
+
+            result = apply_update(update)
+
+            self.assertEqual(result.code, "updated")
+            self.assertEqual(verify_update(update).code, "verified")
+            self.assertEqual(apply_update(update).code, "already_updated")
+            state = parent / "state"
+            generations = state / "manifests"
+            self.assertTrue(
+                (generations / f"{install.manifest.manifest_sha256}.json").is_file()
+            )
+            self.assertTrue(
+                (generations / f"{update.next_manifest.manifest_sha256}.json").is_file()
+            )
+            self.assertTrue(
+                (parent / "core" / install.manifest.release_relative_path).is_dir()
+            )
+            self.assertEqual(
+                load_installation_manifest(state / "installation.json"),
+                update.next_manifest,
+            )
+            self.assertFalse((state / "operations").exists())
+
+    def test_update_plan_loader_rejects_tampering(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            _, update = self._installed_update(parent)
+            plan_path = parent / "update.json"
+            plan_path.write_text(serialize(update), encoding="utf-8")
+            self.assertEqual(load_update_plan(plan_path), update)
+
+            raw = json.loads(plan_path.read_text(encoding="utf-8"))
+            raw["activation"]["next_core_version"] = "9.9.9"
+            plan_path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaisesRegex(InstallationError, "invalid_plan"):
+                load_update_plan(plan_path)
+
+    def test_update_refuses_changed_artifact_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            _, update = self._installed_update(parent)
+            before = (parent / "state" / "active.json").read_bytes()
+            (Path(update.artifact_root) / "share" / "README.txt").write_text(
+                "changed after approval\n", encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(InstallationError, "artifact_changed"):
+                apply_update(update)
+
+            self.assertEqual(
+                (parent / "state" / "active.json").read_bytes(), before
+            )
+            self.assertFalse(
+                (parent / "core" / update.next_manifest.release_relative_path).exists()
+            )
+
+    def test_update_refuses_dirty_current_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            install, update = self._installed_update(parent)
+            managed = (
+                parent / "core" / install.manifest.release_relative_path
+                / install.manifest.files[0].relative_path
+            )
+            managed.write_text("locally changed\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(InstallationError, "managed_file_modified"):
+                apply_update(update)
+
+            self.assertFalse(
+                (parent / "core" / update.next_manifest.release_relative_path).exists()
+            )
+
+    def test_post_activation_failure_backs_out_and_preserves_new_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            install, update = self._installed_update(parent)
+            state = parent / "state"
+            previous_active = (state / "active.json").read_bytes()
+            original_replace = __import__(
+                "byte_core.installation", fromlist=["_replace_file"]
+            )._replace_file
+
+            def fail_compatibility(path, data, mode):
+                if path == state / "installation.json" and b'"core_version":"0.2.0"' in data:
+                    raise OSError("fictional interrupted compatibility refresh")
+                return original_replace(path, data, mode)
+
+            from unittest import mock
+            with mock.patch(
+                "byte_core.installation._replace_file",
+                side_effect=fail_compatibility,
+            ):
+                with self.assertRaisesRegex(InstallationError, "apply_failed"):
+                    apply_update(update)
+
+            self.assertEqual((state / "active.json").read_bytes(), previous_active)
+            self.assertEqual(
+                load_installation_manifest(state / "installation.json"),
+                install.manifest,
+            )
+            self.assertTrue(
+                (parent / "core" / update.next_manifest.release_relative_path).is_dir()
+            )
+
+    def test_changed_activation_requires_recovery_and_preserves_journal(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            _, update = self._installed_update(parent)
+            state = parent / "state"
+            original_replace = __import__(
+                "byte_core.installation", fromlist=["_replace_file"]
+            )._replace_file
+
+            def interrupt_after_external_change(path, data, mode):
+                if path == state / "installation.json" and b'"core_version":"0.2.0"' in data:
+                    (state / "active.json").write_text(
+                        '{"fictional":"external change"}\n', encoding="utf-8"
+                    )
+                    raise OSError("fictional interrupted compatibility refresh")
+                return original_replace(path, data, mode)
+
+            from unittest import mock
+            with mock.patch(
+                "byte_core.installation._replace_file",
+                side_effect=interrupt_after_external_change,
+            ):
+                with self.assertRaisesRegex(InstallationError, "recovery_required"):
+                    apply_update(update)
+
+            self.assertTrue(
+                (state / "operations" / f"{update.plan_id}.json").is_file()
+            )
+            self.assertTrue(
+                (parent / "core" / update.next_manifest.release_relative_path).is_dir()
+            )
+
     def test_install_plan_is_deterministic_and_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             parent = Path(temporary)

@@ -20,6 +20,7 @@ MAX_MANIFEST_BYTES = 512 * 1024
 MAX_INSTALL_PLAN_BYTES = 1024 * 1024
 ACTIVE_SCHEMA_VERSION = 1
 JOURNAL_SCHEMA_VERSION = 1
+MANIFEST_STORE_DIRECTORY = "manifests"
 _VERSION = re.compile(
     r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 )
@@ -209,6 +210,10 @@ def build_removal_plan(
         if generated_path != path and generated_path.exists():
             _regular_file(generated_path, "managed_state_invalid")
         remove_files.append(str(generated_path))
+    generation = _manifest_generation_path(Path(manifest.state_root), manifest)
+    if generation.exists():
+        _regular_file(generation, "managed_state_invalid")
+    remove_files.append(str(generation))
     normalized_preserve = tuple(sorted(str(_existing_root(root, "invalid_preserve_root"))
                                        for root in preserve_roots))
     for preserved in normalized_preserve:
@@ -223,8 +228,11 @@ def build_removal_plan(
         "manifest_path": str(path),
         "remove_files": sorted(remove_files, reverse=True),
         "remove_directories": sorted(
-            (str(Path(manifest.core_root) / item)
-             for item in manifest.removable_directories),
+            (
+                *(str(Path(manifest.core_root) / item)
+                  for item in manifest.removable_directories),
+                str(Path(manifest.state_root) / MANIFEST_STORE_DIRECTORY),
+            ),
             key=lambda value: (value.count(os.sep), value), reverse=True,
         ),
         "preserve_roots": list(normalized_preserve),
@@ -246,7 +254,10 @@ def build_update_plan(
     core_version: str,
 ) -> UpdatePlan:
     path = _regular_file(manifest_path, "manifest_read_error")
-    current = load_installation_manifest(path)
+    compatibility = load_installation_manifest(path)
+    current = _load_active_manifest(Path(compatibility.state_root))
+    if compatibility != current:
+        raise InstallationError("manifest_mismatch")
     expected_manifest_path = Path(current.state_root) / "installation.json"
     if path != expected_manifest_path:
         raise InstallationError("manifest_path_mismatch")
@@ -427,6 +438,69 @@ def load_install_plan(path: str | os.PathLike[str]) -> InstallPlan:
     return plan
 
 
+def load_update_plan(path: str | os.PathLike[str]) -> UpdatePlan:
+    plan_path = _plan_file(path)
+    try:
+        raw = json.loads(
+            _read_bounded(plan_path, MAX_INSTALL_PLAN_BYTES).decode("utf-8")
+        )
+    except InstallationError:
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise InstallationError("invalid_plan") from error
+    keys = {
+        "schema_version", "operation", "manifest_path", "artifact_root",
+        "core_root", "state_root", "from_version", "to_version",
+        "current_manifest_sha256", "actions", "next_manifest", "activation",
+        "backout_release_relative_path", "backout_manifest_sha256",
+        "preconditions", "postconditions", "backout", "plan_id",
+    }
+    if type(raw) is not dict or set(raw) != keys or type(raw["actions"]) is not list:
+        raise InstallationError("invalid_plan")
+    try:
+        actions = tuple(
+            InstallAction(
+                item["source_relative_path"], item["target"],
+                item["sha256"], item["mode"],
+            )
+            for item in raw["actions"]
+            if type(item) is dict
+            and set(item) == {"source_relative_path", "target", "sha256", "mode"}
+        )
+        activation_raw = raw["activation"]
+        if type(activation_raw) is not dict or set(activation_raw) != {
+            "current_metadata_sha256", "next_core_version",
+            "next_release_relative_path", "next_manifest_sha256",
+            "activation_plan_id",
+        }:
+            raise InstallationError("invalid_plan")
+        activation = ActivationTransition(
+            activation_raw["current_metadata_sha256"],
+            activation_raw["next_core_version"],
+            activation_raw["next_release_relative_path"],
+            activation_raw["next_manifest_sha256"],
+            activation_raw["activation_plan_id"],
+        )
+        plan = UpdatePlan(
+            raw["schema_version"], raw["operation"], raw["manifest_path"],
+            raw["artifact_root"], raw["core_root"], raw["state_root"],
+            raw["from_version"], raw["to_version"],
+            raw["current_manifest_sha256"], actions,
+            parse_installation_manifest(raw["next_manifest"]), activation,
+            raw["backout_release_relative_path"],
+            raw["backout_manifest_sha256"],
+            _plan_string_tuple(raw["preconditions"]),
+            _plan_string_tuple(raw["postconditions"]),
+            _plan_string_tuple(raw["backout"]), raw["plan_id"],
+        )
+    except (KeyError, TypeError) as error:
+        raise InstallationError("invalid_plan") from error
+    if len(actions) != len(raw["actions"]):
+        raise InstallationError("invalid_plan")
+    _validate_update_plan(plan)
+    return plan
+
+
 def apply_installation(plan: InstallPlan) -> InstallationResult:
     _validate_install_plan(plan)
     core = Path(plan.core_root)
@@ -490,6 +564,11 @@ def apply_installation(plan: InstallPlan) -> InstallationResult:
                 ManagedFile(action.source_relative_path, action.sha256, action.mode),
             )
         manifest_data = serialize(plan.manifest).encode("utf-8")
+        manifest_store = state / MANIFEST_STORE_DIRECTORY
+        _mkdir_exclusive(manifest_store, created_directories)
+        generation_path = _manifest_generation_path(state, plan.manifest)
+        _publish_exclusive(generation_path, manifest_data, 0o600)
+        created_files[generation_path] = manifest_data
         _publish_exclusive(Path(plan.manifest_target), manifest_data, 0o600)
         created_files[Path(plan.manifest_target)] = manifest_data
         journal = _journal_bytes(
@@ -530,6 +609,159 @@ def verify_installation(plan: InstallPlan) -> InstallationResult:
     _validate_install_plan(plan)
     try:
         _verify_installation(plan)
+    except InstallationError as error:
+        raise InstallationError("verification_failed") from error
+    return InstallationResult(
+        "verified", plan.plan_id, plan.core_root, plan.state_root
+    )
+
+
+def apply_update(plan: UpdatePlan) -> InstallationResult:
+    _validate_update_plan(plan)
+    core = Path(plan.core_root)
+    state = Path(plan.state_root)
+    next_active = _make_active(
+        plan.next_manifest, plan.plan_id
+    )
+    try:
+        _verify_update(plan, next_active)
+    except InstallationError:
+        pass
+    else:
+        return InstallationResult(
+            "already_updated", plan.plan_id, plan.core_root, plan.state_root
+        )
+
+    artifact = _existing_root(plan.artifact_root, "invalid_artifact_root")
+    if _scan_artifact(artifact) != plan.next_manifest.files:
+        raise InstallationError("artifact_changed")
+    active_path = state / "active.json"
+    compatibility_path = state / "installation.json"
+    previous_active = _load_active_release(active_path)
+    previous_manifest = _load_active_manifest(state)
+    _verify_update_preconditions(plan, previous_active, previous_manifest)
+    previous_active_data = _read_bounded(active_path, MAX_MANIFEST_BYTES)
+    previous_manifest_data = serialize(previous_manifest).encode("utf-8")
+    next_active_data = serialize(next_active).encode("utf-8")
+    next_manifest_data = serialize(plan.next_manifest).encode("utf-8")
+
+    created_files: dict[Path, bytes] = {}
+    created_directories: list[Path] = []
+    activated = False
+    journal_path = state / "operations" / f"{plan.plan_id}.json"
+    try:
+        if journal_path.parent.exists():
+            if not journal_path.parent.is_dir() or _is_link_like(journal_path.parent):
+                raise InstallationError("managed_state_invalid")
+        else:
+            _mkdir_exclusive(journal_path.parent, created_directories)
+        journal = _update_journal_bytes(plan, "prepared", (), False)
+        _write_exclusive(journal_path, journal, 0o600)
+        created_files[journal_path] = journal
+
+        release_root = core / plan.next_manifest.release_relative_path
+        _mkdir_exclusive(release_root, created_directories)
+        for action in plan.actions:
+            target = Path(action.target)
+            parent = PurePosixPath(action.source_relative_path).parent
+            if parent != PurePosixPath("."):
+                current = release_root
+                for part in parent.parts:
+                    current /= part
+                    if not current.exists():
+                        _mkdir_exclusive(current, created_directories)
+                    elif current not in created_directories:
+                        raise InstallationError("target_exists")
+            data = _read_bounded(
+                artifact / action.source_relative_path, MAX_ARTIFACT_FILE_BYTES
+            )
+            if _digest(data) != action.sha256:
+                raise InstallationError("artifact_changed")
+            _write_exclusive(target, data, action.mode)
+            created_files[target] = data
+            journal = _update_journal_bytes(
+                plan, "copying",
+                tuple(str(item) for item in created_files if item != journal_path),
+                False,
+            )
+            _replace_file(journal_path, journal, 0o600)
+            created_files[journal_path] = journal
+        _verify_release(plan.next_manifest)
+
+        store = state / MANIFEST_STORE_DIRECTORY
+        if store.exists():
+            if not store.is_dir() or _is_link_like(store):
+                raise InstallationError("managed_state_invalid")
+        else:
+            _mkdir_exclusive(store, created_directories)
+        for manifest, data in (
+            (previous_manifest, previous_manifest_data),
+            (plan.next_manifest, next_manifest_data),
+        ):
+            generation = _manifest_generation_path(state, manifest)
+            if generation.exists():
+                if _read_bounded(generation, MAX_MANIFEST_BYTES) != data:
+                    raise InstallationError("manifest_mismatch")
+            else:
+                _publish_exclusive(generation, data, 0o600)
+                created_files[generation] = data
+
+        _verify_release(previous_manifest)
+        journal = _update_journal_bytes(
+            plan, "activating",
+            tuple(str(item) for item in created_files if item != journal_path),
+            False,
+        )
+        _replace_file(journal_path, journal, 0o600)
+        created_files[journal_path] = journal
+        _replace_file(active_path, next_active_data, 0o600)
+        activated = True
+        journal = _update_journal_bytes(
+            plan, "activated",
+            tuple(str(item) for item in created_files if item != journal_path),
+            True,
+        )
+        _replace_file(journal_path, journal, 0o600)
+        created_files[journal_path] = journal
+        _verify_active_state(state, next_active, plan.next_manifest)
+        _replace_file(compatibility_path, next_manifest_data, 0o600)
+        _verify_update(plan, next_active)
+
+        journal_path.unlink()
+        created_files.pop(journal_path)
+        if journal_path.parent in created_directories:
+            journal_path.parent.rmdir()
+            created_directories.remove(journal_path.parent)
+        return InstallationResult(
+            "updated", plan.plan_id, plan.core_root, plan.state_root
+        )
+    except Exception as error:
+        if activated:
+            if _backout_activation(
+                state, next_active_data, previous_active_data,
+                previous_active, previous_manifest, previous_manifest_data,
+            ):
+                try:
+                    journal_path.unlink()
+                    if journal_path.parent in created_directories:
+                        journal_path.parent.rmdir()
+                except OSError:
+                    raise InstallationError("recovery_required") from error
+                if isinstance(error, InstallationError):
+                    raise InstallationError("apply_failed") from error
+                raise InstallationError("apply_failed") from error
+            raise InstallationError("recovery_required") from error
+        if not _rollback_created(created_files, created_directories):
+            raise InstallationError("recovery_required") from error
+        if isinstance(error, InstallationError):
+            raise
+        raise InstallationError("apply_failed") from error
+
+
+def verify_update(plan: UpdatePlan) -> InstallationResult:
+    _validate_update_plan(plan)
+    try:
+        _verify_update(plan, _make_active(plan.next_manifest, plan.plan_id))
     except InstallationError as error:
         raise InstallationError("verification_failed") from error
     return InstallationResult(
@@ -593,18 +825,86 @@ def _validate_install_plan(plan: InstallPlan) -> None:
 
 
 def _make_active_release(plan: InstallPlan) -> ActiveRelease:
+    return _make_active(plan.manifest, plan.plan_id)
+
+
+def _make_active(
+    manifest: InstallationManifest, plan_id: str
+) -> ActiveRelease:
     unsigned = {
         "schema_version": ACTIVE_SCHEMA_VERSION,
-        "core_version": plan.manifest.core_version,
-        "release_relative_path": plan.manifest.release_relative_path,
-        "manifest_sha256": plan.manifest.manifest_sha256,
-        "activation_plan_id": plan.plan_id,
+        "core_version": manifest.core_version,
+        "release_relative_path": manifest.release_relative_path,
+        "manifest_sha256": manifest.manifest_sha256,
+        "activation_plan_id": plan_id,
     }
     return ActiveRelease(
-        ACTIVE_SCHEMA_VERSION, plan.manifest.core_version,
-        plan.manifest.release_relative_path, plan.manifest.manifest_sha256,
-        plan.plan_id, _digest(_canonical_json(unsigned).encode()),
+        ACTIVE_SCHEMA_VERSION, manifest.core_version,
+        manifest.release_relative_path, manifest.manifest_sha256,
+        plan_id, _digest(_canonical_json(unsigned).encode()),
     )
+
+
+def _validate_update_plan(plan: UpdatePlan) -> None:
+    if plan.schema_version != INSTALL_PLAN_SCHEMA_VERSION or plan.operation != "update":
+        raise InstallationError("unsupported_plan")
+    artifact = _existing_root(plan.artifact_root, "invalid_plan")
+    core = _absolute_text_path(plan.core_root, "invalid_plan")
+    state = _absolute_text_path(plan.state_root, "invalid_plan")
+    _validate_manifest(plan.next_manifest)
+    if (
+        any(
+            type(value) is not str
+            for value in (
+                plan.manifest_path, plan.from_version, plan.to_version,
+                plan.current_manifest_sha256,
+                plan.activation.current_metadata_sha256,
+                plan.activation.next_core_version,
+                plan.activation.next_release_relative_path,
+                plan.activation.next_manifest_sha256,
+                plan.activation.activation_plan_id,
+                plan.backout_release_relative_path,
+                plan.backout_manifest_sha256,
+            )
+        )
+        or
+        plan.manifest_path != str(state / "installation.json")
+        or plan.next_manifest.core_root != str(core)
+        or plan.next_manifest.state_root != str(state)
+        or plan.next_manifest.core_version != plan.to_version
+        or plan.next_manifest.release_relative_path != f"releases/{plan.to_version}"
+        or plan.activation != ActivationTransition(
+            plan.activation.current_metadata_sha256,
+            plan.to_version,
+            plan.next_manifest.release_relative_path,
+            plan.next_manifest.manifest_sha256,
+            "$plan_id",
+        )
+        or plan.current_manifest_sha256 != plan.backout_manifest_sha256
+        or not _DIGEST.fullmatch(plan.current_manifest_sha256)
+        or not _DIGEST.fullmatch(plan.activation.current_metadata_sha256)
+        or not _VERSION.fullmatch(plan.from_version)
+        or not _VERSION.fullmatch(plan.to_version)
+        or _version_tuple(plan.to_version) <= _version_tuple(plan.from_version)
+    ):
+        raise InstallationError("invalid_plan")
+    release_root = core / plan.next_manifest.release_relative_path
+    expected_actions = tuple(
+        InstallAction(
+            item.relative_path, str(release_root / item.relative_path),
+            item.sha256, item.mode,
+        )
+        for item in plan.next_manifest.files
+    )
+    if plan.actions != expected_actions:
+        raise InstallationError("invalid_plan")
+    for action in plan.actions:
+        if not _contains(artifact, artifact / action.source_relative_path):
+            raise InstallationError("invalid_plan")
+    unsigned = asdict(plan)
+    claimed = unsigned.pop("plan_id")
+    if type(claimed) is not str or claimed != _digest(_canonical_json(unsigned).encode()):
+        raise InstallationError("plan_integrity_failed")
 
 
 def _parse_active_release(raw: Any) -> ActiveRelease:
@@ -663,14 +963,117 @@ def _verify_active_manifest(
 
 def _verify_installation(plan: InstallPlan) -> None:
     manifest_path = Path(plan.manifest_target)
-    manifest = load_installation_manifest(manifest_path)
-    if manifest != plan.manifest:
+    compatibility = load_installation_manifest(manifest_path)
+    manifest = _load_active_manifest(Path(plan.state_root))
+    if compatibility != plan.manifest or manifest != plan.manifest:
         raise InstallationError("manifest_mismatch")
     active = _load_active_release(Path(plan.state_root) / "active.json")
     _verify_active_manifest(active, manifest)
     if active != _make_active_release(plan):
         raise InstallationError("active_mismatch")
     _verify_release(manifest)
+
+
+def _manifest_generation_path(
+    state: Path, manifest: InstallationManifest
+) -> Path:
+    return state / MANIFEST_STORE_DIRECTORY / f"{manifest.manifest_sha256}.json"
+
+
+def _load_active_manifest(state: Path) -> InstallationManifest:
+    active = _load_active_release(state / "active.json")
+    generation = (
+        state / MANIFEST_STORE_DIRECTORY / f"{active.manifest_sha256}.json"
+    )
+    path = generation if generation.exists() else state / "installation.json"
+    manifest = load_installation_manifest(path)
+    _verify_active_manifest(active, manifest)
+    return manifest
+
+
+def _verify_active_state(
+    state: Path,
+    expected_active: ActiveRelease,
+    expected_manifest: InstallationManifest,
+) -> None:
+    active = _load_active_release(state / "active.json")
+    if active != expected_active:
+        raise InstallationError("active_mismatch")
+    manifest = _load_active_manifest(state)
+    if manifest != expected_manifest:
+        raise InstallationError("manifest_mismatch")
+    _verify_release(manifest)
+
+
+def _verify_update_preconditions(
+    plan: UpdatePlan,
+    active: ActiveRelease,
+    manifest: InstallationManifest,
+) -> None:
+    if (
+        active.metadata_sha256 != plan.activation.current_metadata_sha256
+        or manifest.manifest_sha256 != plan.current_manifest_sha256
+        or manifest.core_version != plan.from_version
+        or manifest.release_relative_path != plan.backout_release_relative_path
+    ):
+        raise InstallationError("active_mismatch")
+    compatibility = load_installation_manifest(plan.manifest_path)
+    if compatibility != manifest:
+        raise InstallationError("manifest_mismatch")
+    _verify_active_manifest(active, manifest)
+    _verify_release(manifest)
+    target = Path(plan.core_root) / plan.next_manifest.release_relative_path
+    if target.exists() or _is_link_like(target):
+        raise InstallationError("target_exists")
+
+
+def _verify_update(plan: UpdatePlan, expected_active: ActiveRelease) -> None:
+    state = Path(plan.state_root)
+    _verify_active_state(state, expected_active, plan.next_manifest)
+    compatibility = load_installation_manifest(plan.manifest_path)
+    if compatibility != plan.next_manifest:
+        raise InstallationError("manifest_mismatch")
+    previous_path = (
+        state / MANIFEST_STORE_DIRECTORY
+        / f"{plan.backout_manifest_sha256}.json"
+    )
+    previous = load_installation_manifest(previous_path)
+    if (
+        previous.manifest_sha256 != plan.backout_manifest_sha256
+        or previous.core_version != plan.from_version
+        or previous.release_relative_path != plan.backout_release_relative_path
+    ):
+        raise InstallationError("manifest_mismatch")
+    _verify_release(previous)
+
+
+def _backout_activation(
+    state: Path,
+    expected_active_data: bytes,
+    previous_active_data: bytes,
+    previous_active: ActiveRelease,
+    previous_manifest: InstallationManifest,
+    previous_manifest_data: bytes,
+) -> bool:
+    active_path = state / "active.json"
+    try:
+        if _read_bounded(active_path, MAX_MANIFEST_BYTES) != expected_active_data:
+            return False
+        immutable_previous = load_installation_manifest(
+            _manifest_generation_path(state, previous_manifest)
+        )
+        if immutable_previous != previous_manifest:
+            return False
+        _verify_active_manifest(previous_active, previous_manifest)
+        _verify_release(previous_manifest)
+        _replace_file(active_path, previous_active_data, 0o600)
+        _replace_file(
+            state / "installation.json", previous_manifest_data, 0o600
+        )
+        _verify_active_state(state, previous_active, previous_manifest)
+    except (InstallationError, OSError):
+        return False
+    return True
 
 
 def _verify_release(manifest: InstallationManifest) -> None:
@@ -724,6 +1127,28 @@ def _journal_bytes(
         "manifest_published": manifest_published,
         "active_published": active_published,
         "rollback": "remove_only_unchanged_created_paths",
+    }
+    return (_canonical_json(value) + "\n").encode("utf-8")
+
+
+def _update_journal_bytes(
+    plan: UpdatePlan,
+    phase: str,
+    created_paths: tuple[str, ...],
+    active_replaced: bool,
+) -> bytes:
+    value = {
+        "schema_version": JOURNAL_SCHEMA_VERSION,
+        "operation": "update",
+        "plan_id": plan.plan_id,
+        "phase": phase,
+        "created_paths": list(created_paths),
+        "active_replaced": active_replaced,
+        "previous_manifest_sha256": plan.backout_manifest_sha256,
+        "next_manifest_sha256": plan.next_manifest.manifest_sha256,
+        "rollback": (
+            "reactivate_previous_only_if_activation_and_previous_release_verify"
+        ),
     }
     return (_canonical_json(value) + "\n").encode("utf-8")
 

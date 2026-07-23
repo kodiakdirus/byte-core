@@ -278,6 +278,59 @@ class CliTests(unittest.TestCase):
             self.assertEqual(payload["to_version"], "0.2.0")
             self.assertEqual(before, after)
 
+    @mock.patch.object(cli, "collect_check_report")
+    def test_update_plan_can_be_applied_and_verified_by_cli(self, collect) -> None:
+        collect.return_value = self._report(supported=True)
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            install = build_install_plan(
+                INSTALL_ARTIFACT,
+                parent / "core",
+                parent / "state",
+                "0.1.0",
+            )
+            apply_installation(install)
+            artifact = parent / "update-artifact"
+            import shutil
+            shutil.copytree(INSTALL_ARTIFACT, artifact)
+            (artifact / "share" / "README.txt").write_text(
+                "fictional update\n", encoding="utf-8"
+            )
+            planned = io.StringIO()
+            self.assertEqual(
+                cli.main(
+                    [
+                        "plan", "update",
+                        "--manifest", str(parent / "state" / "installation.json"),
+                        "--artifact-root", str(artifact),
+                        "--core-version", "0.2.0",
+                    ],
+                    stdout=planned,
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+            plan_path = parent / "update-plan.json"
+            plan_path.write_text(planned.getvalue(), encoding="utf-8")
+            applied = io.StringIO()
+            verified = io.StringIO()
+
+            self.assertEqual(
+                cli.main(
+                    ["apply", "--plan", str(plan_path), "--format", "json"],
+                    stdout=applied,
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+            self.assertEqual(
+                cli.main(
+                    ["verify", "--plan", str(plan_path), "--format", "json"],
+                    stdout=verified,
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+            self.assertEqual(json.loads(applied.getvalue())["code"], "updated")
+            self.assertEqual(json.loads(verified.getvalue())["code"], "verified")
+
     def test_internal_failure_is_sanitized(self) -> None:
         errors = io.StringIO()
         private_detail = "unexpected-private-detail"

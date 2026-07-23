@@ -26,12 +26,15 @@ from .lifecycle import (
 from .installation import (
     InstallationError,
     apply_installation,
+    apply_update,
     build_install_plan,
     build_removal_plan,
     build_update_plan,
     load_install_plan,
+    load_update_plan,
     serialize as serialize_installation_plan,
     verify_installation,
+    verify_update,
 )
 
 
@@ -275,8 +278,14 @@ def main(
             except LifecycleError as error:
                 if error.code not in {"invalid_plan", "unsupported_plan"}:
                     raise
-                active_plan = load_install_plan(arguments.plan)
-                result = apply_installation(active_plan)
+                try:
+                    active_plan = load_install_plan(arguments.plan)
+                    result = apply_installation(active_plan)
+                except InstallationError as install_error:
+                    if install_error.code not in {"invalid_plan", "unsupported_plan"}:
+                        raise
+                    active_plan = load_update_plan(arguments.plan)
+                    result = apply_update(active_plan)
             output.write(_format_lifecycle_result(result, arguments.format))
             return ExitStatus.SUCCESS
         if arguments.command == "verify":
@@ -286,8 +295,14 @@ def main(
             except LifecycleError as error:
                 if error.code not in {"invalid_plan", "unsupported_plan"}:
                     raise
-                active_plan = load_install_plan(arguments.plan)
-                result = verify_installation(active_plan)
+                try:
+                    active_plan = load_install_plan(arguments.plan)
+                    result = verify_installation(active_plan)
+                except InstallationError as install_error:
+                    if install_error.code not in {"invalid_plan", "unsupported_plan"}:
+                        raise
+                    active_plan = load_update_plan(arguments.plan)
+                    result = verify_update(active_plan)
             output.write(_format_lifecycle_result(result, arguments.format))
             return ExitStatus.SUCCESS
         if arguments.command == "init":

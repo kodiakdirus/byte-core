@@ -8,6 +8,7 @@ Byte Core installation planning separates Core-managed program files, Byte-gener
 
 - `CORE_ROOT/releases/VERSION/` contains immutable files from one reviewed Core artifact.
 - `STATE_ROOT/installation.json` contains the Byte-generated installation manifest.
+- `STATE_ROOT/manifests/SHA256.json` preserves immutable manifest generations.
 - `STATE_ROOT/active.json` is checksummed activation metadata for the installed release.
 - `DEPLOYMENT_ROOT` remains separate and is never a Core removal target.
 
@@ -31,7 +32,7 @@ Planning writes nothing. The plan is a private local artifact because it contain
 
 ## Install apply and verification
 
-`byte apply --plan PLAN.json` accepts an untampered install plan, re-scans the bounded artifact, and requires previously absent Core and state roots. It creates every release path exclusively, verifies file hashes and exact modes, publishes the checksummed manifest, and atomically publishes `active.json` last as the commit point. It never reads or writes a deployment root.
+`byte apply --plan PLAN.json` accepts an untampered install plan, re-scans the bounded artifact, and requires previously absent Core and state roots. It creates every release path exclusively, verifies file hashes and exact modes, publishes an immutable manifest generation and the compatibility `installation.json` copy, and atomically publishes `active.json` last as the commit point. It never reads or writes a deployment root.
 
 An operation journal at `STATE_ROOT/operations/PLAN_ID.json` records only generic transaction state and exact Core-owned paths. Before activation, failure cleanup removes only unchanged paths created by that invocation. Changed or otherwise ambiguous partial state is preserved with the journal and reported as recovery required. After activation, Byte never guesses at rollback; any failed final verification also preserves the journal for inspection.
 
@@ -51,4 +52,12 @@ Destructive removal remains planning-only. Removal apply, automated interrupted-
 
 The planner inventories the bounded new artifact and targets a previously absent immutable `releases/VERSION` directory under the existing Core root. Its deterministic plan embeds every create action, the complete next manifest, the current activation checksum, the intended next activation fields, and the previous release and manifest checksum as the exact backout target. The activation transition uses the literal `$plan_id` marker because the final activation metadata binds to the resulting plan ID; this avoids a circular plan checksum.
 
-Planning does not create the new release, replace the manifest, change activation, remove the previous release, read deployment content, or perform schema migration. Downgrades and same-version replacements are not updates and are refused. Update apply, activation, verification-triggered backout, and rollback mutation require later reviewed slices.
+Planning does not create the new release, replace the manifest, change activation, remove the previous release, read deployment content, or perform schema migration. Downgrades and same-version replacements are not updates and are refused.
+
+## Experimental update apply and verification
+
+The internal bootstrap can reload an exact update plan through `byte apply --plan PLAN.json`. It re-verifies the current activation, manifest, release, and new artifact before mutation; creates the new release exclusively; verifies it; preserves immutable current and next manifest generations; re-verifies the previous release; and atomically replaces `active.json` as the sole activation commit point. `installation.json` is refreshed afterward as a compatibility copy, not activation authority.
+
+Failure before activation removes only unchanged paths created by that invocation. After activation, automatic backout occurs only when the activation record still exactly matches the attempted update and the previous immutable manifest and release still verify. Backout atomically restores the prior activation and compatibility copy while preserving the new release. Ambiguous state is left with the journal and reported as recovery required.
+
+Exact replay reports `already_updated` only after the new activation, immutable manifest, compatibility copy, complete new release, and preserved previous release all verify. `byte verify --plan PLAN.json` performs the same proof without mutation. This experimental interface does not migrate deployment configuration, fetch or authenticate releases, garbage-collect old releases, implement the reserved top-level `byte update`, or constitute a supported installed CLI.

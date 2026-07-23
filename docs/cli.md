@@ -2,7 +2,7 @@
 
 Byte Core uses one `byte` command for lifecycle operations. The command separates checking, planning, applying, verifying, and backing out changes so that read-only discovery cannot silently become mutation.
 
-The current bootstrap implements `check`, the initial deployment lifecycle, and exact install-plan apply and verification. Update, destructive removal, and diagnostics remain reserved design commitments, not functional capabilities.
+The current bootstrap implements `check`, the initial deployment lifecycle, and experimental exact-plan installation and update apply and verification proofs. Destructive removal, the top-level update workflow, and diagnostics remain reserved design commitments, not functional capabilities.
 
 ## Grammar
 
@@ -104,7 +104,7 @@ An install plan inventories a complete, bounded artifact tree; records each rela
 
 The manifest owns only Core release files and Byte-generated state. It records the manifest schema, Core version, active state, logical roots, release path, artifact digest, managed files, generated state paths, and directories that may be removed only when empty. It must not contain deployment configuration, canonical documents, credentials, inventory, or copied deployment truth.
 
-Install apply reloads and validates the bounded plan, re-scans the artifact, creates absent Core and state roots exclusively, verifies the immutable release, publishes the manifest, and atomically publishes checksummed `active.json` last. A journal supports conservative pre-activation cleanup. Ambiguous cleanup or any post-activation failure returns recovery-required and preserves state for inspection.
+Install apply reloads and validates the bounded plan, re-scans the artifact, creates absent Core and state roots exclusively, verifies the immutable release, publishes an immutable manifest generation and compatibility copy, and atomically publishes checksummed `active.json` last. A journal supports conservative pre-activation cleanup. Ambiguous cleanup or any post-activation failure returns recovery-required and preserves state for inspection.
 
 Install verification requires the exact manifest, activation metadata, release paths, hashes, and modes. Exact apply replay reports `already_installed`; conflicting existing roots are refused.
 
@@ -112,11 +112,15 @@ A removal plan accepts only an active, integrity-valid manifest. It re-reads eve
 
 Plan output contains exact local paths and is a private local artifact. This slice does not implement removal apply behavior, artifact signing, operating-system defaults, privilege escalation, or release provenance.
 
-## Update planning boundary
+## Experimental update lifecycle
 
 `byte plan update` is read-only. It requires a fully verified active installation and a strictly newer semantic version, inventories the new artifact into a fresh immutable release target, and records the exact manifest and activation transition. The existing release is preserved as the backout target. Dirty Core files, altered activation state, existing target releases, same-version replacement, and downgrade requests are refused.
 
-The planner never reads or writes deployment-owned content. It does not apply the update, activate the new release, migrate configuration, fetch releases, or perform rollback. The top-level `byte update` command remains reserved until those mutating phases have separate reviewed contracts.
+The planner never reads or writes deployment-owned content. An exact update plan may be passed to `byte apply` and `byte verify`. Apply re-verifies both artifacts, creates and verifies the new release, preserves checksum-addressed current and next manifests, re-verifies the backout release, and atomically replaces `active.json` as the commit point. `installation.json` is only a compatibility copy.
+
+Before activation, failure cleanup removes only unchanged paths created by the invocation. After activation, Byte restores the prior activation only when the attempted activation is unchanged and the prior immutable manifest and release still verify; it preserves the new release. Any ambiguity returns recovery-required with the operation journal intact.
+
+This proof does not migrate configuration, fetch or authenticate releases, garbage-collect releases, or implement the reserved top-level `byte update`. It is not a supported installed command-line interface.
 
 ## Reserved lifecycle behavior
 
