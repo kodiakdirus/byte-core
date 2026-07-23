@@ -1,0 +1,11 @@
+[features]
+hooks = true
+
+[[hooks.SessionStart]]
+matcher = "startup|resume|clear|compact"
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = '/usr/bin/env python3 "$(git rev-parse --show-toplevel)/.codex/hooks/session_start.py"'
+timeout = 5
+statusMessage = "Loading Byte Core repository safety guidance"
