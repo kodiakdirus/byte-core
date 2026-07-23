@@ -24,7 +24,7 @@ byte shell apply --plan PLAN.json [--format text|json]
 byte shell verify --plan PLAN.json [--format text|json]
 byte shell plan-remove --home-root ABSOLUTE_PATH --shell bash|zsh
 byte shell remove --plan PLAN.json [--format text|json]
-byte doctor --mode off|local-only|ask-before-reporting|automatic-sanitized --component COMPONENT --phase PHASE --error-code CODE --exit-code STATUS [--configuration-schema-version VERSION] [--report-root ABSOLUTE_PATH] [--format text|json]
+byte doctor --mode off|local-only|ask-before-reporting|automatic-sanitized --component COMPONENT --phase PHASE --error-code CODE --exit-code STATUS [--configuration-schema-version VERSION] [--report-root ABSOLUTE_PATH] [--github-dry-run|--github-submit] [--repository kodiakdirus/byte-core] [--transport-root ABSOLUTE_PATH] [--format text|json]
 byte remove --deployment-root ABSOLUTE_PATH [--format text|json]
 ```
 
@@ -149,6 +149,6 @@ Zsh syntax highlighting is included only when the operator supplies `--syntax-hi
 
 Every invocation requires an explicit mode. `off` writes nothing. `local-only` privacy-scans and stores the report under an explicit private-local root. `ask-before-reporting` displays the exact JSON and destination and requires the full stable fingerprint before local storage. `automatic-sanitized` is refused because automatic outbound reporting is unsupported.
 
-No doctor mode accesses the network or deploys a fix. See the [Byte Care contract](byte-care.md) for schema, storage, consent, and hard-crash limitations.
+Local doctor modes do not access the network. `--github-dry-run` uses the user's authenticated `gh` session to search the official repository and display the exact deduplicated create/comment action without mutation. `--github-submit` additionally requires the full fingerprint, preserves the exact Markdown locally, rate-limits retries, and then asks `gh` to perform that reviewed action. GitHub authorizes the user's own account; Byte ships no token. No mode deploys a fix. See the [Byte Care contract](byte-care.md) for schema, storage, consent, transport, and hard-crash limitations.
 
 These reserved descriptions do not imply implementation.

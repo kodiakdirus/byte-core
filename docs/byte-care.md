@@ -35,8 +35,20 @@ The caller selects an explicit absolute report root. Byte creates it with mode `
 
 The exact JSON is scanned before any report directory or file is created. Scanner findings never echo matched content. Reports and report roots are private local artifacts and must not be committed.
 
-## Reliability and transport boundary
+## Reviewed GitHub transport
+
+The optional GitHub transport uses the installation owner's existing authenticated `gh` session. It accepts only the official `kodiakdirus/byte-core` repository and never stores or supplies a maintainer credential.
+
+Planning authenticates `gh`, reads open issue bodies from the official repository, and searches for the exact fingerprint marker. It produces either a create action or a comment on the single matching open issue. Multiple matches are ambiguous and refused. Dry-run displays the exact repository, action, title, label, destination, and Markdown without issue mutation.
+
+Submission requires the full report fingerprint again. Markdown is passed over standard input rather than command arguments and is saved locally with mode `0600` before the network mutation. Authentication and submission failures therefore retain the exact offline artifact. Successful state records the issue number and submission time. A one-hour minimum retry interval prevents retry storms, and a stale create action cannot be reused after that interval; the operator must plan again so an existing fingerprint becomes a comment.
+
+The transport requests the documented `byte-care` label. GitHub ultimately authorizes issue creation or commenting using the user's account; Byte cannot grant that permission. Authentication, disabled issues, missing labels, insufficient repository permission, network failure, and GitHub refusal all fail without bundling or exposing credential material.
+
+No report is sent automatically. GitHub submission is available only through exact text review and explicit fingerprint confirmation. The complete transmitted Markdown remains in the selected private transport root.
+
+## Reliability boundary
 
 Byte-owned commands can construct a report when they retain control after a documented error. A hard interpreter, operating-system, or Codex process failure may prevent report creation. The current bootstrap has no external watcher and does not claim hard-crash capture.
 
-No mode performs network access. GitHub issue creation, authentication, retry policy, rate limiting, exact outbound review, and preservation of transmitted Markdown belong to the separately reviewed transport contract. Byte Care never deploys a fix.
+Local report modes perform no network access. Only the explicitly selected GitHub dry-run or submit path invokes `gh`; dry-run performs authenticated reads but no issue mutation. Byte Care never deploys a fix.

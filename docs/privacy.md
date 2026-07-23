@@ -56,7 +56,7 @@ Public examples are created from approved public requirements and fresh fictiona
 
 Byte Core does not upload prompts, transcripts, environment variables, arbitrary file contents, broad logs, or command output by default.
 
-Automatic outbound reporting is unsupported for v0.1. The local workflow requires an explicit mode per invocation, privacy-scans the exact allowlisted payload before storage, and supports a full-fingerprint confirmation preview. Any future outbound report must provide all of the following before transmission:
+Automatic outbound reporting is unsupported for v0.1. The local workflow requires an explicit mode per invocation, privacy-scans the exact allowlisted payload before storage, and supports a full-fingerprint confirmation preview. The optional reviewed GitHub transport provides the following before transmission:
 
 1. a minimal, documented schema for the report;
 2. local generation without network access;
@@ -64,6 +64,8 @@ Automatic outbound reporting is unsupported for v0.1. The local workflow require
 4. a privacy scan that does not echo matched values;
 5. an explicit user review and approval of the payload and destination; and
 6. a clear cancellation path that leaves the payload local.
+
+It uses only the installation owner's authenticated GitHub CLI session, accepts only the official repository, deduplicates by a stable marker, rate-limits retries, and preserves the exact transmitted Markdown locally. No maintainer credential or anonymous endpoint is included.
 
 Consent to one report does not authorize later reports, broader collection, or a different destination.
 

@@ -49,7 +49,7 @@ The current v0.1 direction includes:
 - reversible install, update, validation, and removal behavior; and
 - privacy-preserving diagnostics and issue reporting.
 
-The initial lifecycle proof implements `check`, guided `init`, read-only initialization, installation, update, shell-integration, and removal planning, exact-plan initialization, installation, update, and shell apply/verification, guided local update checking/application, reversible shell removal, local-only diagnostics, and a preservation-only Core `remove` check. Their [grammar, exit statuses, mutation boundaries, and recovery behavior](docs/cli.md) are documented. Remote update discovery, destructive Core removal, and outbound diagnostics remain unimplemented.
+The initial lifecycle proof implements `check`, guided `init`, read-only initialization, installation, update, shell-integration, and removal planning, exact-plan initialization, installation, update, and shell apply/verification, guided local update checking/application, reversible shell removal, local-only diagnostics with optional reviewed GitHub issue transport, and a preservation-only Core `remove` check. Their [grammar, exit statuses, mutation boundaries, and recovery behavior](docs/cli.md) are documented. Remote update discovery, destructive Core removal, and automatic diagnostics remain unimplemented.
 
 The first bootstrap release, [`v0.0.1`](https://github.com/kodiakdirus/byte-core/releases/tag/v0.0.1), is published as a pre-release with no release assets. It records the repository bootstrap and is not a functional Byte Core release.
 

@@ -20,6 +20,11 @@ from .care import (
     prepare_local_report,
     serialize_diagnostic_report,
 )
+from .care_github import (
+    CareTransportError,
+    plan_github_action,
+    submit_github_action,
+)
 from .lifecycle import (
     LifecycleError,
     apply_initialization,
@@ -202,6 +207,11 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--exit-code", required=True, type=int)
     doctor.add_argument("--configuration-schema-version", type=int)
     doctor.add_argument("--report-root")
+    github_mode = doctor.add_mutually_exclusive_group()
+    github_mode.add_argument("--github-dry-run", action="store_true")
+    github_mode.add_argument("--github-submit", action="store_true")
+    doctor.add_argument("--repository")
+    doctor.add_argument("--transport-root")
     doctor.add_argument("--format", choices=("text", "json"), default="text")
     return parser
 
@@ -481,6 +491,11 @@ def main(
             output.write(_format_lifecycle_result(result, arguments.format))
             return ExitStatus.SUCCESS
         if arguments.command == "doctor":
+            if (
+                (arguments.github_dry_run or arguments.github_submit)
+                and arguments.mode == "off"
+            ):
+                parser.error("reporting mode off forbids GitHub transport")
             report = build_diagnostic_report(
                 component=arguments.component,
                 phase=arguments.phase,
@@ -521,6 +536,38 @@ def main(
                     approved=True,
                 )
             output.write(_format_care_result(result, arguments.format))
+            if arguments.github_dry_run or arguments.github_submit:
+                if arguments.format != "text":
+                    parser.error("GitHub transport uses exact text review")
+                if arguments.repository is None:
+                    parser.error("GitHub transport requires --repository")
+                if arguments.github_submit and arguments.transport_root is None:
+                    parser.error("--github-submit requires --transport-root")
+                action = plan_github_action(
+                    report, repository=arguments.repository
+                )
+                output.write(_format_github_action(action))
+                if arguments.github_dry_run:
+                    output.write("GitHub action: dry-run only\n")
+                    return ExitStatus.SUCCESS
+                output.write(
+                    f"Type fingerprint {report.fingerprint} to submit: "
+                )
+                output.flush()
+                approval = input_stream.readline().strip()
+                if approval != report.fingerprint:
+                    errors.write("byte: GitHub report cancelled\n")
+                    return ExitStatus.REFUSED
+                transport = submit_github_action(
+                    action,
+                    approval_fingerprint=approval,
+                    transport_root=arguments.transport_root,
+                )
+                output.write(
+                    f"GitHub result: {transport.code}\n"
+                    f"Action: {transport.action}\n"
+                    f"Issue: {transport.issue_number}\n"
+                )
             return ExitStatus.SUCCESS
 
         report = collect_check_report()
@@ -605,6 +652,19 @@ def main(
         }:
             return ExitStatus.INTERNAL_ERROR
         return ExitStatus.INVALID_INPUT
+    except CareTransportError as error:
+        errors.write(f"byte: {error.code}\n")
+        if error.code in {
+            "submission_not_approved", "submission_rate_limited",
+            "action_stale", "duplicate_issue_ambiguous",
+            "repository_not_official",
+        }:
+            return ExitStatus.REFUSED
+        if error.code in {
+            "github_submission_failed", "transport_write_failed",
+        }:
+            return ExitStatus.RECOVERY_REQUIRED
+        return ExitStatus.INVALID_INPUT
     except SystemExit:
         raise
     except Exception:
@@ -676,6 +736,24 @@ def _format_care_result(result, output_format: str) -> str:
         f"Result: {result.code}\n"
         f"Mode: {result.mode}\n"
         f"Fingerprint: {result.fingerprint}\n"
+    )
+
+
+def _format_github_action(action) -> str:
+    destination = (
+        "new issue"
+        if action.issue_number is None
+        else f"issue #{action.issue_number}"
+    )
+    return (
+        "Byte Care exact GitHub action\n"
+        f"Repository: {action.repository}\n"
+        f"Action: {action.action}\n"
+        f"Destination: {destination}\n"
+        f"Label: {action.label}\n"
+        f"Title: {action.title}\n"
+        "Markdown:\n"
+        f"{action.markdown}"
     )
 
 

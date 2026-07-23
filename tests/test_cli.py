@@ -22,6 +22,10 @@ SHELL_SCRIPT = REPOSITORY_ROOT / "shell" / "byte-shell.sh"
 sys.path.insert(0, str(SOURCE_ROOT))
 
 from byte_core import cli  # noqa: E402
+from byte_core.care_github import (  # noqa: E402
+    GithubAction,
+    GithubTransportResult,
+)
 from byte_core.installation import (  # noqa: E402
     apply_installation,
     build_install_plan,
@@ -140,6 +144,103 @@ class CliTests(unittest.TestCase):
                 errors.getvalue(), "byte: diagnostic report cancelled\n"
             )
             self.assertFalse(review_root.exists())
+
+    def test_doctor_github_dry_run_and_submit_require_exact_review(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            report_root = parent / "reports"
+            transport_root = parent / "transport"
+            common = [
+                "doctor",
+                "--mode", "local-only",
+                "--component", "update",
+                "--phase", "apply",
+                "--error-code", "verification_failed",
+                "--exit-code", "6",
+                "--report-root", str(report_root),
+                "--repository", "kodiakdirus/byte-core",
+            ]
+            generated_actions = []
+
+            def make_action(report, *, repository):
+                action = GithubAction(
+                    repository=repository,
+                    action="create",
+                    issue_number=None,
+                    title="[Byte Care] fictional report",
+                    label="byte-care",
+                    fingerprint=report.fingerprint,
+                    markdown=(
+                        f"<!-- byte-care:{report.fingerprint} -->\n"
+                        "# Fictional report\n"
+                    ),
+                    report=report,
+                )
+                generated_actions.append(action)
+                return action
+            with mock.patch.object(
+                cli, "plan_github_action", side_effect=make_action
+            ) as planned:
+                dry_run = io.StringIO()
+                self.assertEqual(
+                    cli.main(
+                        [*common, "--github-dry-run"],
+                        stdout=dry_run,
+                    ),
+                    cli.ExitStatus.SUCCESS,
+                )
+                self.assertIn("GitHub action: dry-run only", dry_run.getvalue())
+                planned.assert_called_once()
+            report_file = next(report_root.glob("*.json"))
+            fingerprint = json.loads(
+                report_file.read_text(encoding="utf-8")
+            )["fingerprint"]
+            action = generated_actions[-1]
+
+            submitted_result = GithubTransportResult(
+                code="submitted",
+                action="create",
+                fingerprint=action.fingerprint,
+                issue_number=123,
+            )
+            with (
+                mock.patch.object(
+                    cli, "plan_github_action", side_effect=make_action
+                ),
+                mock.patch.object(
+                    cli, "submit_github_action",
+                    return_value=submitted_result,
+                ) as submitted,
+            ):
+                cancelled = io.StringIO()
+                self.assertEqual(
+                    cli.main(
+                        [
+                            *common, "--github-submit",
+                            "--transport-root", str(transport_root),
+                        ],
+                        stdout=cancelled,
+                        stderr=io.StringIO(),
+                        stdin=io.StringIO("wrong\n"),
+                    ),
+                    cli.ExitStatus.REFUSED,
+                )
+                submitted.assert_not_called()
+
+                output = io.StringIO()
+                self.assertEqual(
+                    cli.main(
+                        [
+                            *common, "--github-submit",
+                            "--transport-root", str(transport_root),
+                        ],
+                        stdout=output,
+                        stdin=io.StringIO(fingerprint + "\n"),
+                    ),
+                    cli.ExitStatus.SUCCESS,
+                )
+                self.assertIn("GitHub result: submitted", output.getvalue())
+                submitted.assert_called_once()
 
     def test_guided_update_check_and_plan_are_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

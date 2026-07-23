@@ -89,6 +89,37 @@ def serialize_diagnostic_report(report: DiagnosticReport) -> str:
     return json.dumps(asdict(report), sort_keys=True, separators=(",", ":")) + "\n"
 
 
+def load_diagnostic_report(
+    path: str | os.PathLike[str],
+) -> DiagnosticReport:
+    try:
+        report_path = Path(path)
+        if (
+            not report_path.is_absolute()
+            or report_path.is_symlink()
+            or not report_path.is_file()
+        ):
+            raise CareError("report_read_failed")
+        raw = json.loads(_read_bounded(report_path).decode("utf-8"))
+    except CareError:
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise CareError("invalid_report") from error
+    keys = {
+        "schema_version", "byte_core_version", "component", "phase",
+        "error_code", "exit_code", "platform", "architecture",
+        "python_version", "configuration_schema_version", "fingerprint",
+    }
+    if type(raw) is not dict or set(raw) != keys:
+        raise CareError("invalid_report")
+    try:
+        report = DiagnosticReport(**raw)
+    except TypeError as error:
+        raise CareError("invalid_report") from error
+    _validate_report(report)
+    return report
+
+
 def prepare_local_report(
     report: DiagnosticReport,
     *,
