@@ -31,6 +31,8 @@ from .installation import (
     build_removal_plan,
     build_update_plan,
     load_install_plan,
+    load_release_descriptor,
+    load_release_notes,
     load_update_plan,
     serialize as serialize_installation_plan,
     verify_installation,
@@ -61,6 +63,19 @@ class CheckReport:
     command: str
     supported: bool
     checks: tuple[CheckResult, ...]
+
+
+@dataclass(frozen=True)
+class UpdateCheckResult:
+    command: str
+    status: str
+    from_version: str
+    to_version: str
+    migration: str
+    release_notes_path: str
+    descriptor_sha256: str
+    plan_id: str
+    action_count: int
 
 
 SUPPORTED_HOSTS = frozenset(
@@ -124,8 +139,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     remove.add_argument("--deployment-root", required=True)
     remove.add_argument("--format", choices=("text", "json"), default="text")
-    for name in ("update", "doctor"):
-        commands.add_parser(name, help="reserved; not implemented")
+    update = commands.add_parser(
+        "update", help="inspect, plan, or apply a local Core update"
+    )
+    update_mode = update.add_mutually_exclusive_group(required=True)
+    update_mode.add_argument("--check", action="store_true")
+    update_mode.add_argument("--plan", action="store_true")
+    update_mode.add_argument("--apply", metavar="PLAN_FILE")
+    update.add_argument("--manifest")
+    update.add_argument("--artifact-root")
+    update.add_argument("--format", choices=("text", "json"), default="text")
+    commands.add_parser("doctor", help="reserved; not implemented")
     return parser
 
 
@@ -326,6 +350,56 @@ def main(
             result = remove_core_integration(arguments.deployment_root)
             output.write(_format_lifecycle_result(result, arguments.format))
             return ExitStatus.SUCCESS
+        if arguments.command == "update":
+            if arguments.apply is None:
+                if arguments.manifest is None or arguments.artifact_root is None:
+                    parser.error(
+                        "--check and --plan require --manifest and --artifact-root"
+                    )
+                active_plan = build_update_plan(
+                    arguments.manifest, arguments.artifact_root
+                )
+                descriptor = load_release_descriptor(
+                    os.path.join(active_plan.artifact_root, "release.json")
+                )
+                if arguments.plan:
+                    output.write(serialize_installation_plan(active_plan))
+                    return ExitStatus.SUCCESS
+                result = _make_update_check_result(active_plan, descriptor)
+                output.write(
+                    _format_update_check(result, arguments.format)
+                )
+                return ExitStatus.SUCCESS
+            if arguments.manifest is not None or arguments.artifact_root is not None:
+                parser.error("--apply accepts only an exact plan file")
+            if arguments.format != "text":
+                parser.error("--apply uses an interactive text preview")
+            readiness = collect_check_report()
+            if not readiness.supported:
+                output.write(_format_text(readiness))
+                return ExitStatus.UNSUPPORTED
+            active_plan = load_update_plan(arguments.apply)
+            candidate = build_update_plan(
+                active_plan.manifest_path, active_plan.artifact_root
+            )
+            if candidate != active_plan:
+                raise InstallationError("plan_stale")
+            descriptor, release_notes = load_release_notes(
+                active_plan.artifact_root,
+                active_plan.release_descriptor_sha256,
+            )
+            output.write(
+                _format_update_preview(active_plan, descriptor, release_notes)
+            )
+            output.write("Type the full plan ID to apply: ")
+            output.flush()
+            if input_stream.readline().strip() != active_plan.plan_id:
+                errors.write("byte: update cancelled\n")
+                return ExitStatus.REFUSED
+            result = apply_update(active_plan)
+            verify_update(active_plan)
+            output.write(_format_lifecycle_result(result, arguments.format))
+            return ExitStatus.SUCCESS
         if arguments.command != "check":
             errors.write("byte: command is not implemented\n")
             return ExitStatus.UNSUPPORTED
@@ -355,7 +429,7 @@ def main(
             "target_exists", "root_link_forbidden", "artifact_link_forbidden",
             "managed_file_modified", "managed_file_missing",
             "managed_path_link_forbidden", "managed_paths_changed",
-            "active_mismatch",
+            "active_mismatch", "plan_stale",
         }:
             return ExitStatus.REFUSED
         if error.code == "apply_failed":
@@ -442,6 +516,57 @@ def _format_lifecycle_result(result, output_format: str) -> str:
     if output_format == "json":
         return json.dumps(asdict(result), sort_keys=True) + "\n"
     return f"Result: {result.code}\nPlan ID: {result.plan_id}\n"
+
+
+def _make_update_check_result(plan, descriptor) -> UpdateCheckResult:
+    return UpdateCheckResult(
+        command="update-check",
+        status="eligible",
+        from_version=plan.from_version,
+        to_version=plan.to_version,
+        migration=descriptor.migration,
+        release_notes_path=descriptor.release_notes_path,
+        descriptor_sha256=descriptor.descriptor_sha256,
+        plan_id=plan.plan_id,
+        action_count=len(plan.actions),
+    )
+
+
+def _format_update_check(
+    result: UpdateCheckResult, output_format: str
+) -> str:
+    if output_format == "json":
+        return json.dumps(asdict(result), sort_keys=True) + "\n"
+    return "\n".join(
+        (
+            "Byte update check",
+            f"Status: {result.status}",
+            f"Current version: {result.from_version}",
+            f"Next version: {result.to_version}",
+            f"Migration: {result.migration}",
+            f"Release notes: {result.release_notes_path}",
+            f"Managed file actions: {result.action_count}",
+            f"Plan ID: {result.plan_id}",
+        )
+    ) + "\n"
+
+
+def _format_update_preview(plan, descriptor, release_notes: str) -> str:
+    lines = [
+        "Byte update plan",
+        f"Current version: {plan.from_version}",
+        f"Next version: {plan.to_version}",
+        f"Migration: {descriptor.migration}",
+        f"Release notes ({descriptor.release_notes_path}):",
+        *(f"  {line}" for line in release_notes.splitlines()),
+        f"Plan ID: {plan.plan_id}",
+        "Create:",
+    ]
+    lines.extend(f"  - {action.target}" for action in plan.actions)
+    lines.append(
+        f"Preserve backout release: {plan.backout_release_relative_path}"
+    )
+    return "\n".join(lines) + "\n"
 
 
 if __name__ == "__main__":

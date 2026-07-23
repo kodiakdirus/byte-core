@@ -24,6 +24,8 @@ from byte_core import cli  # noqa: E402
 from byte_core.installation import (  # noqa: E402
     apply_installation,
     build_install_plan,
+    build_update_plan,
+    serialize as serialize_installation_plan,
 )
 from byte_core.lifecycle import build_initialization_plan  # noqa: E402
 
@@ -69,14 +71,183 @@ class CliTests(unittest.TestCase):
         self.assertEqual(status, cli.ExitStatus.UNSUPPORTED)
         self.assertIn("Result: unsupported", output.getvalue())
 
-    def test_reserved_command_is_clear_and_does_not_run_check(self) -> None:
+    def test_reserved_doctor_is_clear_and_does_not_run_check(self) -> None:
         errors = io.StringIO()
         with mock.patch.object(cli, "collect_check_report") as collect:
-            status = cli.main(["update"], stderr=errors)
+            status = cli.main(["doctor"], stderr=errors)
 
         self.assertEqual(status, cli.ExitStatus.UNSUPPORTED)
         self.assertEqual(errors.getvalue(), "byte: command is not implemented\n")
         collect.assert_not_called()
+
+    def test_guided_update_check_and_plan_are_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            install = build_install_plan(
+                INSTALL_ARTIFACT,
+                parent / "core",
+                parent / "state",
+                "0.1.0",
+            )
+            apply_installation(install)
+            before = self._snapshot(parent)
+            manifest = str(parent / "state" / "installation.json")
+            checked = io.StringIO()
+            planned = io.StringIO()
+
+            self.assertEqual(
+                cli.main(
+                    [
+                        "update", "--check",
+                        "--manifest", manifest,
+                        "--artifact-root", str(UPDATE_RELEASE),
+                        "--format", "json",
+                    ],
+                    stdout=checked,
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+            self.assertEqual(
+                cli.main(
+                    [
+                        "update", "--plan",
+                        "--manifest", manifest,
+                        "--artifact-root", str(UPDATE_RELEASE),
+                    ],
+                    stdout=planned,
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+
+            check_payload = json.loads(checked.getvalue())
+            plan_payload = json.loads(planned.getvalue())
+            self.assertEqual(check_payload["status"], "eligible")
+            self.assertEqual(check_payload["to_version"], "0.2.0")
+            self.assertEqual(check_payload["migration"], "none")
+            self.assertEqual(plan_payload["operation"], "update")
+            self.assertEqual(self._snapshot(parent), before)
+
+    @mock.patch.object(cli, "collect_check_report")
+    def test_guided_update_requires_plan_id_and_applies_exact_plan(
+        self, collect
+    ) -> None:
+        collect.return_value = self._report(supported=True)
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            install = build_install_plan(
+                INSTALL_ARTIFACT,
+                parent / "core",
+                parent / "state",
+                "0.1.0",
+            )
+            apply_installation(install)
+            plan = build_update_plan(
+                parent / "state" / "installation.json", UPDATE_RELEASE
+            )
+            plan_path = parent / "update-plan.json"
+            plan_path.write_text(
+                serialize_installation_plan(plan), encoding="utf-8"
+            )
+            cancelled_errors = io.StringIO()
+            cancelled_output = io.StringIO()
+
+            self.assertEqual(
+                cli.main(
+                    ["update", "--apply", str(plan_path)],
+                    stdout=cancelled_output,
+                    stderr=cancelled_errors,
+                    stdin=io.StringIO("not-the-plan\n"),
+                ),
+                cli.ExitStatus.REFUSED,
+            )
+            self.assertIn("Byte update plan", cancelled_output.getvalue())
+            self.assertIn(
+                "Release notes (RELEASE_NOTES.md):",
+                cancelled_output.getvalue(),
+            )
+            self.assertIn(
+                "Exercises a migration-free local update.",
+                cancelled_output.getvalue(),
+            )
+            self.assertIn(plan.actions[0].target, cancelled_output.getvalue())
+            self.assertEqual(cancelled_errors.getvalue(), "byte: update cancelled\n")
+            self.assertFalse(
+                (parent / "core" / plan.next_manifest.release_relative_path).exists()
+            )
+
+            applied = io.StringIO()
+            self.assertEqual(
+                cli.main(
+                    ["update", "--apply", str(plan_path)],
+                    stdout=applied,
+                    stdin=io.StringIO(plan.plan_id + "\n"),
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+            self.assertIn("Result: updated", applied.getvalue())
+            self.assertTrue(
+                (parent / "core" / plan.next_manifest.release_relative_path).is_dir()
+            )
+
+    @mock.patch.object(cli, "collect_check_report")
+    def test_guided_update_refuses_unsupported_host_before_prompt(
+        self, collect
+    ) -> None:
+        collect.return_value = self._report(supported=False)
+        with tempfile.TemporaryDirectory() as temporary:
+            plan_path = Path(temporary) / "unused-plan.json"
+            output = io.StringIO()
+            self.assertEqual(
+                cli.main(
+                    ["update", "--apply", str(plan_path)],
+                    stdout=output,
+                    stdin=io.StringIO("anything\n"),
+                ),
+                cli.ExitStatus.UNSUPPORTED,
+            )
+            self.assertIn("Result: unsupported", output.getvalue())
+
+    @mock.patch.object(cli, "collect_check_report")
+    def test_guided_update_refuses_stale_plan_before_confirmation(
+        self, collect
+    ) -> None:
+        collect.return_value = self._report(supported=True)
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            install = build_install_plan(
+                INSTALL_ARTIFACT,
+                parent / "core",
+                parent / "state",
+                "0.1.0",
+            )
+            apply_installation(install)
+            plan = build_update_plan(
+                parent / "state" / "installation.json", UPDATE_RELEASE
+            )
+            plan_path = parent / "update-plan.json"
+            plan_path.write_text(
+                serialize_installation_plan(plan), encoding="utf-8"
+            )
+            Path(install.actions[0].target).write_text(
+                "fictional local modification\n", encoding="utf-8"
+            )
+            output = io.StringIO()
+            errors = io.StringIO()
+
+            self.assertEqual(
+                cli.main(
+                    ["update", "--apply", str(plan_path)],
+                    stdout=output,
+                    stderr=errors,
+                    stdin=io.StringIO(plan.plan_id + "\n"),
+                ),
+                cli.ExitStatus.REFUSED,
+            )
+            self.assertEqual(output.getvalue(), "")
+            self.assertEqual(errors.getvalue(), "byte: managed_file_modified\n")
+            self.assertFalse(
+                (parent / "core" / plan.next_manifest.release_relative_path).exists()
+            )
 
     def test_usage_error_returns_two(self) -> None:
         errors = io.StringIO()
@@ -479,6 +650,15 @@ class CliTests(unittest.TestCase):
             command="check",
             supported=supported,
             checks=(cli.CheckResult("python", status, "3.11"),),
+        )
+
+    def _snapshot(self, root: Path) -> tuple[tuple[str, bytes | None], ...]:
+        return tuple(
+            (
+                path.relative_to(root).as_posix(),
+                path.read_bytes() if path.is_file() else None,
+            )
+            for path in sorted(root.rglob("*"), key=lambda item: item.as_posix())
         )
 
 

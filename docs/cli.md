@@ -16,10 +16,12 @@ byte plan update --manifest ABSOLUTE_PATH --artifact-root ABSOLUTE_PATH
 byte plan remove --manifest ABSOLUTE_PATH [--preserve-root ABSOLUTE_PATH]
 byte apply --plan PLAN.json [--format text|json]
 byte verify --plan PLAN.json [--format text|json]
+byte update --check --manifest ABSOLUTE_PATH --artifact-root ABSOLUTE_PATH [--format text|json]
+byte update --plan --manifest ABSOLUTE_PATH --artifact-root ABSOLUTE_PATH
+byte update --apply PLAN.json
 byte remove --deployment-root ABSOLUTE_PATH [--format text|json]
 
 # Reserved; not implemented
-byte update
 byte doctor
 ```
 
@@ -120,11 +122,18 @@ The planner never reads or writes deployment-owned content. An exact update plan
 
 Before activation, failure cleanup removes only unchanged paths created by the invocation. After activation, Byte restores the prior activation only when the attempted activation is unchanged and the prior immutable manifest and release still verify; it preserves the new release. Any ambiguity returns recovery-required with the operation journal intact.
 
-The descriptor and artifact checksums detect mismatch and accidental modification; they do not authenticate publisher identity. This proof does not migrate configuration, fetch releases, verify signatures or tag provenance, garbage-collect releases, or implement the reserved top-level `byte update`. It is not a supported installed command-line interface.
+The experimental top-level workflow composes these primitives:
+
+- `byte update --check` emits a deterministic eligibility summary without mutation.
+- `byte update --plan` emits the exact JSON plan without mutation.
+- `byte update --apply PLAN.json` revalidates the current installation and local artifact against that exact plan, displays the checksummed release notes and every target, and mutates only after the operator types the full plan ID. Unsupported hosts are refused before the plan is loaded or a confirmation is requested.
+
+Interactive apply uses text output so its preview and confirmation prompt cannot be confused with machine-readable JSON. Cancellation performs no mutation. Generic `byte apply --plan` remains the non-guided exact-plan engine.
+
+The descriptor and artifact checksums detect mismatch and accidental modification; they do not authenticate publisher identity. This proof does not migrate configuration, fetch releases, verify signatures or tag provenance, garbage-collect releases, or provide automatic update selection. It is not a supported installed command-line interface.
 
 ## Reserved lifecycle behavior
 
-- `update` will use the versioned update and rollback contract.
 - `doctor` will construct minimal local diagnostics under the privacy contract.
 
 These reserved descriptions do not imply implementation.

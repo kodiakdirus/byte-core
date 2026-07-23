@@ -20,6 +20,7 @@ MAX_ARTIFACT_FILE_BYTES = 4 * 1024 * 1024
 MAX_ARTIFACT_TOTAL_BYTES = 32 * 1024 * 1024
 MAX_MANIFEST_BYTES = 512 * 1024
 MAX_INSTALL_PLAN_BYTES = 1024 * 1024
+MAX_RELEASE_NOTES_BYTES = 64 * 1024
 ACTIVE_SCHEMA_VERSION = 1
 JOURNAL_SCHEMA_VERSION = 1
 MANIFEST_STORE_DIRECTORY = "manifests"
@@ -412,6 +413,34 @@ def load_release_descriptor(
         raise InstallationError("invalid_release_descriptor")
     _validate_release_descriptor(descriptor)
     return descriptor
+
+
+def load_release_notes(
+    artifact_root: str | os.PathLike[str],
+    expected_descriptor_sha256: str,
+) -> tuple[ReleaseDescriptor, str]:
+    artifact = _existing_root(artifact_root, "invalid_artifact_root")
+    descriptor = load_release_descriptor(artifact / "release.json")
+    if descriptor.descriptor_sha256 != expected_descriptor_sha256:
+        raise InstallationError("artifact_changed")
+    _scan_release_artifact(artifact, descriptor)
+    item = next(
+        entry
+        for entry in descriptor.files
+        if entry.relative_path == descriptor.release_notes_path
+    )
+    path = artifact / item.relative_path
+    try:
+        data = _read_bounded(path, MAX_RELEASE_NOTES_BYTES)
+        mode = 0o700 if path.stat().st_mode & stat.S_IXUSR else 0o600
+        if _digest(data) != item.sha256 or mode != item.mode:
+            raise InstallationError("artifact_changed")
+        notes = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise InstallationError("invalid_release_notes") from error
+    if any(ord(character) < 32 and character not in "\t\n\r" for character in notes):
+        raise InstallationError("invalid_release_notes")
+    return descriptor, notes
 
 
 def load_installation_manifest(
