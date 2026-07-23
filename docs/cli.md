@@ -24,10 +24,8 @@ byte shell apply --plan PLAN.json [--format text|json]
 byte shell verify --plan PLAN.json [--format text|json]
 byte shell plan-remove --home-root ABSOLUTE_PATH --shell bash|zsh
 byte shell remove --plan PLAN.json [--format text|json]
+byte doctor --mode off|local-only|ask-before-reporting|automatic-sanitized --component COMPONENT --phase PHASE --error-code CODE --exit-code STATUS [--configuration-schema-version VERSION] [--report-root ABSOLUTE_PATH] [--format text|json]
 byte remove --deployment-root ABSOLUTE_PATH [--format text|json]
-
-# Reserved; not implemented
-byte doctor
 ```
 
 Unknown commands and unsupported options are usage errors. A reserved command must fail clearly; it must not perform a partial or substitute operation.
@@ -137,10 +135,6 @@ Interactive apply uses text output so its preview and confirmation prompt cannot
 
 The descriptor and artifact checksums detect mismatch and accidental modification; they do not authenticate publisher identity. This proof does not migrate configuration, fetch releases, verify signatures or tag provenance, garbage-collect releases, or provide automatic update selection. It is not a supported installed command-line interface.
 
-## Reserved lifecycle behavior
-
-- `doctor` will construct minimal local diagnostics under the privacy contract.
-
 ## Optional shell lifecycle
 
 The `byte shell` namespace applies the same separation to Bash and Zsh profile integration. `plan` and `plan-remove` are read-only and emit exact private-local JSON plans. `apply`, `verify`, and `remove` load those plans without guessing a home directory or profile.
@@ -148,5 +142,13 @@ The `byte shell` namespace applies the same separation to Bash and Zsh profile i
 Apply and remove preserve unrelated profile content, use distinct recoverable backups, retain the original profile mode, and refuse changes made after planning. Exact replay is idempotent. A malformed, duplicate, stale, missing, or linked managed block is refused.
 
 Zsh syntax highlighting is included only when the operator supplies `--syntax-highlighting` during planning. Byte does not require Zsh on Linux, install packages, modify the login shell, or add syntax highlighting implicitly. The full boundary is documented in the [shell-integration contract](shell-integration.md).
+
+## Byte Care diagnostics
+
+`byte doctor` constructs a fixed-schema report from explicit Byte-owned error fields and normalized runtime identifiers. It never collects arbitrary logs, environment variables, configuration values, inventory, prompts, transcripts, paths, or command output.
+
+Every invocation requires an explicit mode. `off` writes nothing. `local-only` privacy-scans and stores the report under an explicit private-local root. `ask-before-reporting` displays the exact JSON and destination and requires the full stable fingerprint before local storage. `automatic-sanitized` is refused because automatic outbound reporting is unsupported.
+
+No doctor mode accesses the network or deploys a fix. See the [Byte Care contract](byte-care.md) for schema, storage, consent, and hard-crash limitations.
 
 These reserved descriptions do not imply implementation.

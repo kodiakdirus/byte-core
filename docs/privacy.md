@@ -4,7 +4,7 @@ Byte Core is developed in public and may run near private deployment data. This 
 
 > Byte Core owns behavior and structure; each deployment owns identity and truth.
 
-This is a design contract. The current bootstrap provides internal privacy-scanning, allowlisting, redaction, bounded input-adapter primitives, and a CI release-artifact gate. It does not claim that an end-user CLI, automatic reporting, or a complete packaging pipeline is implemented.
+This is a design contract. The current bootstrap provides internal privacy-scanning, allowlisting, redaction, bounded input-adapter primitives, a CI release-artifact gate, and an experimental local-only [Byte Care diagnostic workflow](byte-care.md). It does not claim that automatic or outbound reporting, hard-crash capture, or a complete packaging pipeline is implemented.
 
 ## Security objective
 
@@ -56,7 +56,7 @@ Public examples are created from approved public requirements and fresh fictiona
 
 Byte Core does not upload prompts, transcripts, environment variables, arbitrary file contents, broad logs, or command output by default.
 
-Automatic outbound reporting is unsupported for v0.1. Any future outbound report must provide all of the following before transmission:
+Automatic outbound reporting is unsupported for v0.1. The local workflow requires an explicit mode per invocation, privacy-scans the exact allowlisted payload before storage, and supports a full-fingerprint confirmation preview. Any future outbound report must provide all of the following before transmission:
 
 1. a minimal, documented schema for the report;
 2. local generation without network access;

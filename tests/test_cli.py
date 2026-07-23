@@ -72,14 +72,74 @@ class CliTests(unittest.TestCase):
         self.assertEqual(status, cli.ExitStatus.UNSUPPORTED)
         self.assertIn("Result: unsupported", output.getvalue())
 
-    def test_reserved_doctor_is_clear_and_does_not_run_check(self) -> None:
+    def test_automatic_doctor_reporting_is_explicitly_unsupported(self) -> None:
         errors = io.StringIO()
         with mock.patch.object(cli, "collect_check_report") as collect:
-            status = cli.main(["doctor"], stderr=errors)
+            status = cli.main(
+                [
+                    "doctor",
+                    "--mode", "automatic-sanitized",
+                    "--component", "update",
+                    "--phase", "apply",
+                    "--error-code", "verification_failed",
+                    "--exit-code", "6",
+                ],
+                stderr=errors,
+            )
 
-        self.assertEqual(status, cli.ExitStatus.UNSUPPORTED)
-        self.assertEqual(errors.getvalue(), "byte: command is not implemented\n")
+        self.assertEqual(status, cli.ExitStatus.INVALID_INPUT)
+        self.assertEqual(
+            errors.getvalue(), "byte: automatic_reporting_unsupported\n"
+        )
         collect.assert_not_called()
+
+    def test_doctor_local_only_and_review_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "reports"
+            common = [
+                "doctor",
+                "--component", "update",
+                "--phase", "apply",
+                "--error-code", "verification_failed",
+                "--exit-code", "6",
+                "--configuration-schema-version", "1",
+                "--report-root", str(root),
+            ]
+            local = io.StringIO()
+            self.assertEqual(
+                cli.main(
+                    [*common, "--mode", "local-only", "--format", "json"],
+                    stdout=local,
+                ),
+                cli.ExitStatus.SUCCESS,
+            )
+            payload = json.loads(local.getvalue())
+            self.assertTrue(payload["stored"])
+            report = root / f"{payload['fingerprint']}.json"
+            self.assertTrue(report.is_file())
+
+            review_root = Path(temporary) / "review-reports"
+            review_args = [
+                *common[:-2], "--report-root", str(review_root),
+                "--mode", "ask-before-reporting",
+            ]
+            preview = io.StringIO()
+            errors = io.StringIO()
+            self.assertEqual(
+                cli.main(
+                    review_args,
+                    stdout=preview,
+                    stderr=errors,
+                    stdin=io.StringIO("cancel\n"),
+                ),
+                cli.ExitStatus.REFUSED,
+            )
+            self.assertIn("Byte Care exact local report", preview.getvalue())
+            self.assertIn('"component":"update"', preview.getvalue())
+            self.assertEqual(
+                errors.getvalue(), "byte: diagnostic report cancelled\n"
+            )
+            self.assertFalse(review_root.exists())
 
     def test_guided_update_check_and_plan_are_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

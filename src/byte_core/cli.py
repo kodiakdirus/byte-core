@@ -14,6 +14,12 @@ from dataclasses import asdict, dataclass
 from enum import IntEnum
 from typing import Sequence, TextIO
 
+from .care import (
+    CareError,
+    build_diagnostic_report,
+    prepare_local_report,
+    serialize_diagnostic_report,
+)
 from .lifecycle import (
     LifecycleError,
     apply_initialization,
@@ -179,7 +185,24 @@ def build_parser() -> argparse.ArgumentParser:
         shell_action.add_argument(
             "--format", choices=("text", "json"), default="text"
         )
-    commands.add_parser("doctor", help="reserved; not implemented")
+    doctor = commands.add_parser(
+        "doctor", help="construct a minimal local Byte Care report"
+    )
+    doctor.add_argument(
+        "--mode",
+        required=True,
+        choices=(
+            "off", "local-only", "ask-before-reporting",
+            "automatic-sanitized",
+        ),
+    )
+    doctor.add_argument("--component", required=True)
+    doctor.add_argument("--phase", required=True)
+    doctor.add_argument("--error-code", required=True)
+    doctor.add_argument("--exit-code", required=True, type=int)
+    doctor.add_argument("--configuration-schema-version", type=int)
+    doctor.add_argument("--report-root")
+    doctor.add_argument("--format", choices=("text", "json"), default="text")
     return parser
 
 
@@ -457,9 +480,48 @@ def main(
                 result = apply_shell_plan(active_plan)
             output.write(_format_lifecycle_result(result, arguments.format))
             return ExitStatus.SUCCESS
-        if arguments.command != "check":
-            errors.write("byte: command is not implemented\n")
-            return ExitStatus.UNSUPPORTED
+        if arguments.command == "doctor":
+            report = build_diagnostic_report(
+                component=arguments.component,
+                phase=arguments.phase,
+                error_code=arguments.error_code,
+                exit_code=arguments.exit_code,
+                platform=_normalize_system(platform.system()),
+                architecture=_normalize_machine(platform.machine()),
+                python_version=(
+                    f"{sys.version_info.major}.{sys.version_info.minor}"
+                ),
+                configuration_schema_version=(
+                    arguments.configuration_schema_version
+                ),
+            )
+            approved = False
+            result = prepare_local_report(
+                report,
+                mode=arguments.mode,
+                report_root=arguments.report_root,
+                approved=False,
+            )
+            if result.code == "approval_required":
+                output.write("Byte Care exact local report\n")
+                output.write(serialize_diagnostic_report(report))
+                output.write(
+                    f"Destination: {arguments.report_root}\n"
+                    f"Type fingerprint {report.fingerprint} to save locally: "
+                )
+                output.flush()
+                approved = input_stream.readline().strip() == report.fingerprint
+                if not approved:
+                    errors.write("byte: diagnostic report cancelled\n")
+                    return ExitStatus.REFUSED
+                result = prepare_local_report(
+                    report,
+                    mode=arguments.mode,
+                    report_root=arguments.report_root,
+                    approved=True,
+                )
+            output.write(_format_care_result(result, arguments.format))
+            return ExitStatus.SUCCESS
 
         report = collect_check_report()
         if arguments.format == "json":
@@ -531,6 +593,18 @@ def main(
         if error.code == "apply_failed":
             return ExitStatus.INTERNAL_ERROR
         return ExitStatus.INVALID_INPUT
+    except CareError as error:
+        errors.write(f"byte: {error.code}\n")
+        if error.code in {
+            "privacy_scan_failed", "report_collision",
+            "report_target_invalid",
+        }:
+            return ExitStatus.REFUSED
+        if error.code in {
+            "report_write_failed", "report_verification_failed",
+        }:
+            return ExitStatus.INTERNAL_ERROR
+        return ExitStatus.INVALID_INPUT
     except SystemExit:
         raise
     except Exception:
@@ -593,6 +667,16 @@ def _format_lifecycle_result(result, output_format: str) -> str:
     if output_format == "json":
         return json.dumps(asdict(result), sort_keys=True) + "\n"
     return f"Result: {result.code}\nPlan ID: {result.plan_id}\n"
+
+
+def _format_care_result(result, output_format: str) -> str:
+    if output_format == "json":
+        return json.dumps(asdict(result), sort_keys=True) + "\n"
+    return (
+        f"Result: {result.code}\n"
+        f"Mode: {result.mode}\n"
+        f"Fingerprint: {result.fingerprint}\n"
+    )
 
 
 def _make_update_check_result(plan, descriptor) -> UpdateCheckResult:
