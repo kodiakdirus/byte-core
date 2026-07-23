@@ -44,3 +44,11 @@ Removal planning accepts only an active, checksummed manifest. It verifies every
 The removal list is derived exclusively from manifest-owned paths. Directories are eligible only when the manifest names them and a future apply operation proves they are empty. The manifest itself is removed last. Explicit preservation roots must not overlap Core-managed paths and are recorded as postconditions.
 
 Destructive removal remains planning-only. Removal apply, automated interrupted-operation recovery, artifact signing, platform defaults, and privilege elevation require later reviewed slices.
+
+## Update planning
+
+`byte plan update` accepts the canonical active installation manifest, an explicit new artifact root, and a strictly newer semantic version. Before planning, it verifies the manifest checksum, active metadata, current release path set, per-file hashes, and exact modes. Dirty, missing, linked, ambiguous, or inactive current state is refused.
+
+The planner inventories the bounded new artifact and targets a previously absent immutable `releases/VERSION` directory under the existing Core root. Its deterministic plan embeds every create action, the complete next manifest, the current activation checksum, the intended next activation fields, and the previous release and manifest checksum as the exact backout target. The activation transition uses the literal `$plan_id` marker because the final activation metadata binds to the resulting plan ID; this avoids a circular plan checksum.
+
+Planning does not create the new release, replace the manifest, change activation, remove the previous release, read deployment content, or perform schema migration. Downgrades and same-version replacements are not updates and are refused. Update apply, activation, verification-triggered backout, and rollback mutation require later reviewed slices.

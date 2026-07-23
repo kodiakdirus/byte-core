@@ -18,6 +18,7 @@ from byte_core.installation import (  # noqa: E402
     apply_installation,
     build_install_plan,
     build_removal_plan,
+    build_update_plan,
     load_install_plan,
     load_installation_manifest,
     parse_installation_manifest,
@@ -341,6 +342,112 @@ class InstallationTests(unittest.TestCase):
             with self.assertRaises(InstallationError) as raised:
                 load_installation_manifest(linked_manifest)
             self.assertEqual(raised.exception.code, "manifest_read_error")
+
+    def test_update_plan_is_deterministic_read_only_and_preserving(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            install = build_install_plan(
+                ARTIFACT, parent / "core", parent / "state", "0.1.0"
+            )
+            apply_installation(install)
+            deployment = parent / "deployment"
+            deployment.mkdir()
+            sentinel = deployment / "operator-notes.txt"
+            sentinel.write_text("fictional deployment content\n", encoding="utf-8")
+            artifact = parent / "artifact-0.2.0"
+            shutil.copytree(ARTIFACT, artifact)
+            (artifact / "share" / "README.txt").write_text(
+                "fictional update artifact\n", encoding="utf-8"
+            )
+            before = _tree_snapshot(parent)
+
+            first = build_update_plan(
+                parent / "state" / "installation.json", artifact, "0.2.0"
+            )
+            second = build_update_plan(
+                parent / "state" / "installation.json", artifact, "0.2.0"
+            )
+
+            self.assertEqual(first, second)
+            self.assertEqual(_tree_snapshot(parent), before)
+            self.assertEqual(first.operation, "update")
+            self.assertEqual(first.from_version, "0.1.0")
+            self.assertEqual(first.to_version, "0.2.0")
+            self.assertEqual(first.activation.activation_plan_id, "$plan_id")
+            self.assertEqual(
+                first.backout_release_relative_path, "releases/0.1.0"
+            )
+            self.assertEqual(
+                sentinel.read_text(encoding="utf-8"),
+                "fictional deployment content\n",
+            )
+
+    def test_update_plan_refuses_dirty_current_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            install = build_install_plan(
+                ARTIFACT, parent / "core", parent / "state", "0.1.0"
+            )
+            apply_installation(install)
+            Path(install.actions[0].target).write_text("dirty\n", encoding="utf-8")
+
+            with self.assertRaises(InstallationError) as raised:
+                build_update_plan(
+                    parent / "state" / "installation.json", ARTIFACT, "0.2.0"
+                )
+
+            self.assertEqual(raised.exception.code, "managed_file_modified")
+
+    def test_update_plan_requires_newer_absent_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            install = build_install_plan(
+                ARTIFACT, parent / "core", parent / "state", "0.2.0"
+            )
+            apply_installation(install)
+            manifest = parent / "state" / "installation.json"
+            for version in ("0.2.0", "0.1.9"):
+                with self.subTest(version=version):
+                    with self.assertRaises(InstallationError) as raised:
+                        build_update_plan(manifest, ARTIFACT, version)
+                    self.assertEqual(
+                        raised.exception.code, "update_version_not_newer"
+                    )
+
+            existing = parent / "core" / "releases" / "0.3.0"
+            existing.mkdir()
+            with self.assertRaises(InstallationError) as raised:
+                build_update_plan(manifest, ARTIFACT, "0.3.0")
+            self.assertEqual(raised.exception.code, "target_exists")
+
+    def test_update_plan_refuses_tampered_active_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            install = build_install_plan(
+                ARTIFACT, parent / "core", parent / "state", "0.1.0"
+            )
+            apply_installation(install)
+            active_path = parent / "state" / "active.json"
+            active = json.loads(active_path.read_text(encoding="utf-8"))
+            active["core_version"] = "0.0.9"
+            active_path.write_text(json.dumps(active), encoding="utf-8")
+
+            with self.assertRaises(InstallationError) as raised:
+                build_update_plan(
+                    parent / "state" / "installation.json", ARTIFACT, "0.2.0"
+                )
+            self.assertEqual(raised.exception.code, "active_integrity_failed")
+
+
+def _tree_snapshot(root: Path) -> tuple[tuple[str, str, int], ...]:
+    snapshot = []
+    for path in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
+        relative = path.relative_to(root).as_posix()
+        if path.is_file():
+            snapshot.append((relative, path.read_bytes().hex(), path.stat().st_mode))
+        else:
+            snapshot.append((relative, "directory", path.stat().st_mode))
+    return tuple(snapshot)
 
 
 if __name__ == "__main__":

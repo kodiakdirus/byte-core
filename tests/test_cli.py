@@ -17,6 +17,10 @@ INSTALL_ARTIFACT = REPOSITORY_ROOT / "tests" / "fixtures" / "installation" / "ar
 sys.path.insert(0, str(SOURCE_ROOT))
 
 from byte_core import cli  # noqa: E402
+from byte_core.installation import (  # noqa: E402
+    apply_installation,
+    build_install_plan,
+)
 from byte_core.lifecycle import build_initialization_plan  # noqa: E402
 
 
@@ -232,6 +236,47 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(json.loads(applied.getvalue())["code"], "installed")
             self.assertEqual(json.loads(verified.getvalue())["code"], "verified")
+
+    def test_update_plan_command_is_json_and_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            install = build_install_plan(
+                INSTALL_ARTIFACT,
+                parent / "core",
+                parent / "state",
+                "0.1.0",
+            )
+            apply_installation(install)
+            before = {
+                path.relative_to(parent).as_posix(): (
+                    path.read_bytes() if path.is_file() else None
+                )
+                for path in parent.rglob("*")
+            }
+            output = io.StringIO()
+
+            status = cli.main(
+                [
+                    "plan", "update",
+                    "--manifest", str(parent / "state" / "installation.json"),
+                    "--artifact-root", str(INSTALL_ARTIFACT),
+                    "--core-version", "0.2.0",
+                ],
+                stdout=output,
+            )
+
+            after = {
+                path.relative_to(parent).as_posix(): (
+                    path.read_bytes() if path.is_file() else None
+                )
+                for path in parent.rglob("*")
+            }
+            payload = json.loads(output.getvalue())
+            self.assertEqual(status, cli.ExitStatus.SUCCESS)
+            self.assertEqual(payload["operation"], "update")
+            self.assertEqual(payload["from_version"], "0.1.0")
+            self.assertEqual(payload["to_version"], "0.2.0")
+            self.assertEqual(before, after)
 
     def test_internal_failure_is_sanitized(self) -> None:
         errors = io.StringIO()

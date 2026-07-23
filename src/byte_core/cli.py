@@ -28,6 +28,7 @@ from .installation import (
     apply_installation,
     build_install_plan,
     build_removal_plan,
+    build_update_plan,
     load_install_plan,
     serialize as serialize_installation_plan,
     verify_installation,
@@ -107,6 +108,10 @@ def build_parser() -> argparse.ArgumentParser:
     plan_remove = plan_operations.add_parser("remove")
     plan_remove.add_argument("--manifest", required=True)
     plan_remove.add_argument("--preserve-root", action="append", default=[])
+    plan_update = plan_operations.add_parser("update")
+    plan_update.add_argument("--manifest", required=True)
+    plan_update.add_argument("--artifact-root", required=True)
+    plan_update.add_argument("--core-version", required=True)
 
     for name in ("apply", "verify"):
         command = commands.add_parser(name, help=f"{name} an exact plan")
@@ -245,12 +250,19 @@ def main(
                     arguments.state_root, arguments.core_version,
                 )
                 output.write(serialize_installation_plan(installation_plan))
-            else:
+            elif arguments.operation == "remove":
                 removal_plan = build_removal_plan(
                     arguments.manifest,
                     preserve_roots=tuple(arguments.preserve_root),
                 )
                 output.write(serialize_installation_plan(removal_plan))
+            else:
+                update_plan = build_update_plan(
+                    arguments.manifest,
+                    arguments.artifact_root,
+                    arguments.core_version,
+                )
+                output.write(serialize_installation_plan(update_plan))
             return ExitStatus.SUCCESS
         if arguments.command == "apply":
             readiness = collect_check_report()
@@ -328,6 +340,9 @@ def main(
             return ExitStatus.VERIFICATION_FAILED
         if error.code in {
             "target_exists", "root_link_forbidden", "artifact_link_forbidden",
+            "managed_file_modified", "managed_file_missing",
+            "managed_path_link_forbidden", "managed_paths_changed",
+            "active_mismatch",
         }:
             return ExitStatus.REFUSED
         if error.code == "apply_failed":

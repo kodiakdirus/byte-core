@@ -92,6 +92,37 @@ class RemovalPlan:
 
 
 @dataclass(frozen=True)
+class ActivationTransition:
+    current_metadata_sha256: str
+    next_core_version: str
+    next_release_relative_path: str
+    next_manifest_sha256: str
+    activation_plan_id: str
+
+
+@dataclass(frozen=True)
+class UpdatePlan:
+    schema_version: int
+    operation: str
+    manifest_path: str
+    artifact_root: str
+    core_root: str
+    state_root: str
+    from_version: str
+    to_version: str
+    current_manifest_sha256: str
+    actions: tuple[InstallAction, ...]
+    next_manifest: InstallationManifest
+    activation: ActivationTransition
+    backout_release_relative_path: str
+    backout_manifest_sha256: str
+    preconditions: tuple[str, ...]
+    postconditions: tuple[str, ...]
+    backout: tuple[str, ...]
+    plan_id: str
+
+
+@dataclass(frozen=True)
 class ActiveRelease:
     schema_version: int
     core_version: str
@@ -205,6 +236,110 @@ def build_removal_plan(
         tuple(unsigned["remove_files"]), tuple(unsigned["remove_directories"]),
         normalized_preserve, tuple(unsigned["preconditions"]),
         tuple(unsigned["postconditions"]),
+        _digest(_canonical_json(unsigned).encode()),
+    )
+
+
+def build_update_plan(
+    manifest_path: str | os.PathLike[str],
+    artifact_root: str | os.PathLike[str],
+    core_version: str,
+) -> UpdatePlan:
+    path = _regular_file(manifest_path, "manifest_read_error")
+    current = load_installation_manifest(path)
+    expected_manifest_path = Path(current.state_root) / "installation.json"
+    if path != expected_manifest_path:
+        raise InstallationError("manifest_path_mismatch")
+    active = _load_active_release(Path(current.state_root) / "active.json")
+    _verify_active_manifest(active, current)
+    _verify_release(current)
+
+    if not _VERSION.fullmatch(core_version):
+        raise InstallationError("invalid_core_version")
+    if _version_tuple(core_version) <= _version_tuple(current.core_version):
+        raise InstallationError("update_version_not_newer")
+    artifact = _existing_root(artifact_root, "invalid_artifact_root")
+    files = _scan_artifact(artifact)
+    release_relative = f"releases/{core_version}"
+    release_root = Path(current.core_root) / release_relative
+    if _is_link_like(release_root) or release_root.exists():
+        raise InstallationError("target_exists")
+
+    actions = tuple(
+        InstallAction(
+            item.relative_path,
+            str(release_root / item.relative_path),
+            item.sha256,
+            item.mode,
+        )
+        for item in files
+    )
+    artifact_digest = _digest(
+        _canonical_json([asdict(item) for item in files]).encode()
+    )
+    next_manifest = _make_manifest(
+        core_version,
+        Path(current.core_root),
+        Path(current.state_root),
+        release_relative,
+        artifact_digest,
+        files,
+    )
+    activation = ActivationTransition(
+        active.metadata_sha256,
+        core_version,
+        release_relative,
+        next_manifest.manifest_sha256,
+        "$plan_id",
+    )
+    unsigned = {
+        "schema_version": INSTALL_PLAN_SCHEMA_VERSION,
+        "operation": "update",
+        "manifest_path": str(path),
+        "artifact_root": str(artifact),
+        "core_root": current.core_root,
+        "state_root": current.state_root,
+        "from_version": current.core_version,
+        "to_version": core_version,
+        "current_manifest_sha256": current.manifest_sha256,
+        "actions": [asdict(item) for item in actions],
+        "next_manifest": asdict(next_manifest),
+        "activation": asdict(activation),
+        "backout_release_relative_path": current.release_relative_path,
+        "backout_manifest_sha256": current.manifest_sha256,
+        "preconditions": [
+            "current_installation_verified",
+            "new_release_absent",
+            "artifact_hashes_match",
+        ],
+        "postconditions": [
+            "new_release_verified",
+            "activation_matches_plan",
+            "previous_release_preserved",
+        ],
+        "backout": [
+            "reactivate_previous_verified_release",
+            "remove_only_unchanged_new_release_paths",
+        ],
+    }
+    return UpdatePlan(
+        INSTALL_PLAN_SCHEMA_VERSION,
+        "update",
+        str(path),
+        str(artifact),
+        current.core_root,
+        current.state_root,
+        current.core_version,
+        core_version,
+        current.manifest_sha256,
+        actions,
+        next_manifest,
+        activation,
+        current.release_relative_path,
+        current.manifest_sha256,
+        tuple(unsigned["preconditions"]),
+        tuple(unsigned["postconditions"]),
+        tuple(unsigned["backout"]),
         _digest(_canonical_json(unsigned).encode()),
     )
 
@@ -403,7 +538,13 @@ def verify_installation(plan: InstallPlan) -> InstallationResult:
 
 
 def serialize(
-    value: InstallPlan | RemovalPlan | InstallationManifest | ActiveRelease,
+    value: (
+        InstallPlan
+        | RemovalPlan
+        | UpdatePlan
+        | InstallationManifest
+        | ActiveRelease
+    ),
 ) -> str:
     return _canonical_json(asdict(value)) + "\n"
 
@@ -482,11 +623,42 @@ def _parse_active_release(raw: Any) -> ActiveRelease:
     claimed = unsigned.pop("metadata_sha256")
     if (
         active.schema_version != ACTIVE_SCHEMA_VERSION
+        or type(active.core_version) is not str
+        or not _VERSION.fullmatch(active.core_version)
+        or type(active.release_relative_path) is not str
+        or type(active.manifest_sha256) is not str
+        or not _DIGEST.fullmatch(active.manifest_sha256)
+        or type(active.activation_plan_id) is not str
+        or not _DIGEST.fullmatch(active.activation_plan_id)
         or type(claimed) is not str
         or claimed != _digest(_canonical_json(unsigned).encode())
     ):
         raise InstallationError("active_integrity_failed")
+    _safe_relative(active.release_relative_path)
     return active
+
+
+def _load_active_release(path: Path) -> ActiveRelease:
+    try:
+        raw = json.loads(
+            _read_bounded(
+                _regular_file(path, "active_read_error"), MAX_MANIFEST_BYTES
+            ).decode("utf-8")
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise InstallationError("invalid_active_metadata") from error
+    return _parse_active_release(raw)
+
+
+def _verify_active_manifest(
+    active: ActiveRelease, manifest: InstallationManifest
+) -> None:
+    if (
+        active.core_version != manifest.core_version
+        or active.release_relative_path != manifest.release_relative_path
+        or active.manifest_sha256 != manifest.manifest_sha256
+    ):
+        raise InstallationError("active_mismatch")
 
 
 def _verify_installation(plan: InstallPlan) -> None:
@@ -494,17 +666,16 @@ def _verify_installation(plan: InstallPlan) -> None:
     manifest = load_installation_manifest(manifest_path)
     if manifest != plan.manifest:
         raise InstallationError("manifest_mismatch")
-    active_path = Path(plan.state_root) / "active.json"
-    try:
-        active_raw = json.loads(_read_bounded(
-            _regular_file(active_path, "active_read_error"), MAX_MANIFEST_BYTES
-        ).decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise InstallationError("invalid_active_metadata") from error
-    if _parse_active_release(active_raw) != _make_active_release(plan):
+    active = _load_active_release(Path(plan.state_root) / "active.json")
+    _verify_active_manifest(active, manifest)
+    if active != _make_active_release(plan):
         raise InstallationError("active_mismatch")
+    _verify_release(manifest)
+
+
+def _verify_release(manifest: InstallationManifest) -> None:
     release_root = _existing_root(
-        Path(plan.core_root) / manifest.release_relative_path,
+        Path(manifest.core_root) / manifest.release_relative_path,
         "managed_root_invalid",
     )
     for item in manifest.files:
@@ -530,6 +701,11 @@ def _verify_installation(plan: InstallPlan) -> None:
             raise InstallationError("managed_path_type_forbidden")
     if actual_files != expected_files or actual_directories != expected_directories:
         raise InstallationError("managed_paths_changed")
+
+
+def _version_tuple(value: str) -> tuple[int, int, int]:
+    major, minor, patch = value.split(".")
+    return int(major), int(minor), int(patch)
 
 
 def _journal_bytes(

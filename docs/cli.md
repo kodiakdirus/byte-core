@@ -12,6 +12,7 @@ byte check [--format text|json]
 byte init --deployment-root ABSOLUTE_PATH
 byte plan init --deployment-root ABSOLUTE_PATH
 byte plan install --artifact-root ABSOLUTE_PATH --core-root ABSOLUTE_PATH --state-root ABSOLUTE_PATH --core-version VERSION
+byte plan update --manifest ABSOLUTE_PATH --artifact-root ABSOLUTE_PATH --core-version NEWER_VERSION
 byte plan remove --manifest ABSOLUTE_PATH [--preserve-root ABSOLUTE_PATH]
 byte apply --plan PLAN.json [--format text|json]
 byte verify --plan PLAN.json [--format text|json]
@@ -110,6 +111,12 @@ Install verification requires the exact manifest, activation metadata, release p
 A removal plan accepts only an active, integrity-valid manifest. It re-reads every managed file and refuses missing, modified, mode-changed, symbolic-link, or escaped targets. Its removal list comes exclusively from the manifest. Explicit preservation roots must not overlap Core-owned paths and are recorded as postconditions.
 
 Plan output contains exact local paths and is a private local artifact. This slice does not implement removal apply behavior, artifact signing, operating-system defaults, privilege escalation, or release provenance.
+
+## Update planning boundary
+
+`byte plan update` is read-only. It requires a fully verified active installation and a strictly newer semantic version, inventories the new artifact into a fresh immutable release target, and records the exact manifest and activation transition. The existing release is preserved as the backout target. Dirty Core files, altered activation state, existing target releases, same-version replacement, and downgrade requests are refused.
+
+The planner never reads or writes deployment-owned content. It does not apply the update, activate the new release, migrate configuration, fetch releases, or perform rollback. The top-level `byte update` command remains reserved until those mutating phases have separate reviewed contracts.
 
 ## Reserved lifecycle behavior
 
