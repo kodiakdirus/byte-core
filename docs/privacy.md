@@ -4,7 +4,7 @@ Byte Core is developed in public and may run near private deployment data. This 
 
 > Byte Core owns behavior and structure; each deployment owns identity and truth.
 
-This is a design contract. The current bootstrap provides internal privacy-scanning, allowlisting, redaction, bounded input-adapter primitives, a CI release-artifact gate, and an experimental local-only [Byte Care diagnostic workflow](byte-care.md). It does not claim that automatic or outbound reporting, hard-crash capture, or a complete packaging pipeline is implemented.
+This is a design contract. The current bootstrap provides internal privacy-scanning, allowlisting, redaction, bounded input-adapter primitives, a deterministic candidate-artifact builder and CI gate, and an experimental local-only [Byte Care diagnostic workflow](byte-care.md). It does not claim that automatic reporting, hard-crash capture, package-manager publication, or a functional release is implemented.
 
 ## Security objective
 
@@ -83,7 +83,7 @@ Unknown deployment facts remain unknown. Examples must not invent facts about a 
 
 ## Scanning contract
 
-The local scanner inspects only explicitly selected inputs. Current internal adapters cover Core-public files, staged Git content, release artifact directories, and already-constructed diagnostic payloads. The repository CI runs the unit suite, scans the public documentation release path, and proves that the release gate rejects a runtime-generated synthetic leakage artifact. Future packaging workflows must pass their complete release artifact directory through the same gate before publication.
+The local scanner inspects only explicitly selected inputs. Current internal adapters cover Core-public files, staged Git content, release artifact directories, and already-constructed diagnostic payloads. Repository CI runs the unit suite, scans public documentation and templates, proves rejection of a runtime-generated synthetic leakage artifact, builds the deterministic v0.1 candidate directory, and scans that complete candidate before it can become release evidence.
 
 Scanner output must identify the rule, classification, and safe location needed for review without printing the discovered value. Context must be omitted or reduced to a non-sensitive structural description.
 

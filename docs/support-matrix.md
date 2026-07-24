@@ -33,6 +33,8 @@ The pinned operating-system labels follow GitHub's [published hosted-runner imag
 
 Before a functional v0.1 release, the release gate still requires recorded manual installation, verification, backout, preservation, and offline smoke-test evidence on the supported target platforms. Until that evidence and every other release criterion are complete, README language must continue to describe Byte Core as pre-alpha and unsupported for operational use.
 
+The current ledger intentionally records all three targets as pending in `release/v0.1/manual-evidence.json`. The final gate and record format are defined in the [release checklist](release-checklist.md); no pending entry is support evidence.
+
 ## Expanding support
 
 A new host combination becomes a supported target only through a reviewed change that adds deterministic detection, automated coverage where feasible, documented manual evidence requirements, and known limitations. Recognition by `platform.system()` or `platform.machine()` alone is not evidence of support.

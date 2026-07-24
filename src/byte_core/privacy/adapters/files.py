@@ -32,6 +32,7 @@ _TEXT_BASENAMES = frozenset(
         ".editorconfig",
         ".gitattributes",
         ".gitignore",
+        "byte",
         "LICENSE",
         "NOTICE",
     }

@@ -12,7 +12,7 @@ Byte Core installation planning separates Core-managed program files, Byte-gener
 - `STATE_ROOT/active.json` is checksummed activation metadata for the installed release.
 - `DEPLOYMENT_ROOT` remains separate and is never a Core removal target.
 
-The current bootstrap requires explicit absolute roots. It can apply and verify an exact install plan, but it does not select operating-system defaults, elevate privileges, authenticate release provenance, or delete files.
+The current bootstrap requires explicit absolute roots. It can apply and verify exact install and removal plans, but it does not select operating-system defaults, elevate privileges, or authenticate release provenance.
 
 ## Manifest contract
 

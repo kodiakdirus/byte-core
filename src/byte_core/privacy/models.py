@@ -17,7 +17,9 @@ class DataClass(str, Enum):
     PUBLIC = "public"
     REVIEWED_DIAGNOSTIC = "reviewed_diagnostic"
     DEPLOYMENT_SENSITIVE = "deployment_sensitive"
-    SECRET = "secret"
+    SECRET = (
+        "secret"
+    )
     PROHIBITED_SOURCE = "prohibited_source"
 
 

@@ -69,7 +69,7 @@ At minimum:
 
 Do not claim success based only on implementation. Distinguish check, plan, apply, verify, and backout phases when the change has operational effects.
 
-The repository has initial unit, privacy, and support-matrix CI, but it does not yet have a complete release-acceptance suite. Do not represent missing automation or manual platform evidence as completed validation.
+The repository has unit, privacy, support-matrix, and deterministic candidate-artifact gates. Manual supported-platform evidence remains incomplete. Do not represent configured CI or pending manual evidence as completed validation.
 
 ## Versioning, branches, and releases
 
@@ -89,12 +89,13 @@ While the major version is `0`, Byte Core is in initial development. Interfaces,
 
 - Release tags use the form `vMAJOR.MINOR.PATCH` and identify an exact reviewed commit on `main`.
 - A tag is created only after the stated milestone criteria have been reviewed and validation evidence has been recorded.
-- `v0.0.1` is the planned first bootstrap tag. It must not be created merely because the repository foundation exists; its approved milestone criteria must first be met.
+- `v0.0.1` is the published bootstrap pre-release and has no functional assets.
+- `v0.1.0` is created only after the repeatable release gate and its manual platform evidence are complete and approved.
 - A published tag must not be moved or reused. Corrections are made through new commits and, when appropriate, a later version.
 - A GitHub release may be created manually from an approved tag to summarize its contents and known limitations.
 - A GitHub release does not by itself imply package publication, compatibility, production support, or ongoing maintenance.
 
-Byte Core does not currently define CI-gated releases, release automation, package publication, artifact signing, a changelog process, or a support policy.
+Byte Core does not currently define automatic tag publication, package-manager publication, artifact signing, a changelog process, or a support policy. The deterministic candidate builder and release gate do not create or publish a release.
 
 ### Validation and backout
 

@@ -31,6 +31,15 @@ jobs:
       - name: Scan canonical starter templates
         run: python scripts/check_release_privacy.py templates/canonical
 
+      - name: Build and validate deterministic v0.1 candidate
+        run: |
+          python scripts/build_release_artifact.py \
+            --version 0.1.0 \
+            --output "$RUNNER_TEMP/byte-core-0.1.0"
+          python scripts/check_v01_release.py \
+            --artifact "$RUNNER_TEMP/byte-core-0.1.0" \
+            --evidence release/v0.1/manual-evidence.json
+
       - name: Prove known release leakage is blocked
         shell: bash
         run: |

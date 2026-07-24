@@ -37,6 +37,20 @@ The repository includes experimental `byte check` and initial deployment plannin
 
 The intended v0.1 host and runtime boundary, automated evidence, and remaining manual evidence are published in the [support matrix](docs/support-matrix.md). The matrix defines release targets without changing the repository's pre-alpha support status.
 
+## Try the source checkout
+
+On a target host with Git and Python 3.11 or newer, a fresh reviewer can inspect the CLI without installation:
+
+```text
+git clone https://github.com/kodiakdirus/byte-core.git
+cd byte-core
+./bin/byte check
+./bin/byte --help
+python3 -m unittest discover -s tests
+```
+
+Do not use the pre-alpha lifecycle against operational data. The [CLI contract](docs/cli.md) explains exact plans and exit statuses; the [installation contract](docs/installation.md) explains ownership and recovery. The repeatable [v0.1 release checklist](docs/release-checklist.md) remains blocked on recorded platform evidence.
+
 ## Planned direction
 
 The current v0.1 direction includes:
