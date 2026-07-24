@@ -9,11 +9,14 @@ From a clean, reviewed `main` commit:
 ```text
 python3 scripts/build_release_artifact.py --version 0.1.0 --output /absolute/new/byte-core-0.1.0
 python3 scripts/check_v01_release.py --artifact /absolute/new/byte-core-0.1.0 --evidence release/v0.1/manual-evidence.json
+python3 scripts/package_release_candidate.py --artifact /absolute/new/byte-core-0.1.0 --output /absolute/new/byte-core-0.1.0.tar.gz
 ```
 
 The builder accepts a new absolute output directory, copies only its explicit public source set, normalizes file modes, and writes a checksummed `release.json`. Rebuilding at another path must produce identical file bytes.
 
-The second command validates descriptor integrity, scans the complete artifact for privacy findings, and validates the manual-evidence ledger. It deliberately succeeds while evidence is pending so pull-request CI can prove the automated candidate. The final release command adds `--require-complete` and must remain blocked until every record passes.
+The second command validates descriptor integrity, scans the complete artifact for privacy findings, and validates the manual-evidence ledger. It deliberately succeeds while evidence is pending so pull-request CI can prove the automated candidate. The packager accepts only that complete descriptor-bounded, privacy-clean artifact and emits a normalized archive plus its SHA-256. Repackaging identical artifact bytes must produce an identical archive.
+
+The final release command adds `--require-complete` and must remain blocked until every platform record and the independent fresh-user review pass.
 
 ## Automated gate
 
@@ -29,7 +32,7 @@ CI configuration is not evidence by itself. Record the URLs and conclusions of p
 
 ## Manual platform record
 
-Create one public Markdown record beside `manual-evidence.json` for each supported target. Use only fresh fictional deployment data. Include the tested commit and artifact descriptor digest, then record:
+Follow the exact [deployment-candidate testing guide](deployment-testing.md). Copy the matching template from [`release/v0.1/evidence/`](../release/v0.1/evidence/) for each supported target. Use only fresh fictional deployment data. Include the tested commit and candidate archive SHA-256, then record:
 
 ```text
 # TARGET manual evidence
@@ -57,7 +60,7 @@ Change that target’s ledger status to `passed` only after the record is review
 
 ## Fresh-user review
 
-A reviewer who did not implement the feature follows the README and public docs without private assistance. Record unclear, missing, or assumed steps as release blockers and fix them before repeating the review.
+A reviewer who did not implement the feature follows the README and public docs without private assistance and completes the [fresh-user review template](../release/v0.1/evidence/fresh-user-review-template.md). Record unclear, missing, or assumed steps as release blockers and fix them before repeating the review. The `fresh_user_review` ledger entry remains `pending` until that record is reviewed.
 
 ## Final tag gate
 

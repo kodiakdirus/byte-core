@@ -4,7 +4,7 @@
 
 Byte Core is an independent community project exploring a safe, friendly, Codex-centered framework for self-managed infrastructure.
 
-The repository has established its public foundation and initial configuration-ownership boundary. Broader architecture, governance, and safety work remains in progress. No functional release or supported installed command-line interface exists yet. Installation and operational use are not currently supported.
+The repository has established its public foundation and initial configuration-ownership boundary. The v0.1 candidate is ready for supported-platform deployment testing, but no functional release or supported installed command-line interface exists yet. Installation and operational use are not currently supported.
 
 ## Architectural rule
 
@@ -49,7 +49,7 @@ cd byte-core
 python3 -m unittest discover -s tests
 ```
 
-Do not use the pre-alpha lifecycle against operational data. The [CLI contract](docs/cli.md) explains exact plans and exit statuses; the [installation contract](docs/installation.md) explains ownership and recovery. The repeatable [v0.1 release checklist](docs/release-checklist.md) remains blocked on recorded platform evidence.
+Do not use the pre-alpha lifecycle against operational data. The [CLI contract](docs/cli.md) explains exact plans and exit statuses; the [installation contract](docs/installation.md) explains ownership and recovery. Supported-platform testers should follow the exact [deployment-candidate testing guide](docs/deployment-testing.md). The repeatable [v0.1 release checklist](docs/release-checklist.md) remains blocked on recorded platform evidence and an independent fresh-user review.
 
 ## Planned direction
 

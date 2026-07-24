@@ -55,7 +55,9 @@ def check(
         raise GateError("manual_evidence_read_failed") from error
     if (
         type(raw) is not dict
-        or set(raw) != {"schema_version", "release", "targets"}
+        or set(raw) != {
+            "schema_version", "release", "targets", "fresh_user_review"
+        }
         or raw["schema_version"] != 1
         or raw["release"] != "0.1.0"
         or type(raw["targets"]) is not list
@@ -83,12 +85,30 @@ def check(
         statuses.append(f"{identity[0]}/{identity[1]}: passed")
     if seen != EXPECTED_TARGETS:
         raise GateError("manual_evidence_targets_incomplete")
+    review = raw["fresh_user_review"]
+    if type(review) is not dict or set(review) != {"status", "evidence"}:
+        raise GateError("invalid_fresh_user_review")
+    if review["status"] == "pending" and review["evidence"] is None:
+        statuses.append("fresh-user-review: pending")
+    elif review["status"] == "passed" and type(review["evidence"]) is dict:
+        _validate_fresh_review(review["evidence"], evidence_file.parent)
+        statuses.append("fresh-user-review: passed")
+    else:
+        raise GateError("invalid_fresh_user_review")
     if require_complete and any(item.endswith(": pending") for item in statuses):
         raise GateError("manual_evidence_pending")
     return tuple(sorted(statuses))
 
 
-def _validate_record(value: dict[str, object], root: Path) -> None:
+def _validate_record(
+    value: dict[str, object],
+    root: Path,
+    *,
+    headings: tuple[str, ...] = (
+        "## Installation", "## Verification", "## Backout",
+        "## Preservation", "## Offline",
+    ),
+) -> None:
     if set(value) != {"completed_on", "commit_sha", "record"}:
         raise GateError("invalid_manual_evidence")
     if (
@@ -107,12 +127,33 @@ def _validate_record(value: dict[str, object], root: Path) -> None:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
         raise GateError("manual_evidence_record_missing") from error
-    for heading in (
-        "## Installation", "## Verification", "## Backout",
-        "## Preservation", "## Offline",
-    ):
+    for heading in headings:
         if heading not in text:
             raise GateError("manual_evidence_record_incomplete")
+
+
+def _validate_fresh_review(value: dict[str, object], root: Path) -> None:
+    if set(value) != {
+        "completed_on", "commit_sha", "record", "reviewer_role"
+    }:
+        raise GateError("invalid_fresh_user_review")
+    if (
+        type(value["reviewer_role"]) is not str
+        or value["reviewer_role"] != "independent reviewer"
+    ):
+        raise GateError("invalid_fresh_user_review")
+    _validate_record(
+        {
+            "completed_on": value["completed_on"],
+            "commit_sha": value["commit_sha"],
+            "record": value["record"],
+        },
+        root,
+        headings=(
+            "## Environment", "## Steps followed", "## Findings",
+            "## Outcome",
+        ),
+    )
 
 
 def main(arguments: list[str] | None = None) -> int:
