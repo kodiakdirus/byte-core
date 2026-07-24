@@ -39,6 +39,9 @@ jobs:
           python scripts/check_v01_release.py \
             --artifact "$RUNNER_TEMP/byte-core-0.1.0" \
             --evidence release/v0.1/manual-evidence.json
+          python scripts/package_release_candidate.py \
+            --artifact "$RUNNER_TEMP/byte-core-0.1.0" \
+            --output "$RUNNER_TEMP/byte-core-0.1.0.tar.gz"
 
       - name: Prove known release leakage is blocked
         shell: bash
