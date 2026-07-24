@@ -91,11 +91,11 @@ class ShellIntegrationTests(unittest.TestCase):
                 home, "zsh", SHELL_SCRIPT, syntax
             )
             self.assertEqual(
-                with_syntax.syntax_highlighting_path, str(syntax)
+                with_syntax.syntax_highlighting_path, str(syntax.resolve())
             )
             apply_shell_plan(with_syntax)
             content = (home / ".zshrc").read_text(encoding="utf-8")
-            self.assertIn(str(syntax), content)
+            self.assertIn(str(syntax.resolve()), content)
 
             other_home = home / "other"
             other_home.mkdir()

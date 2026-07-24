@@ -119,7 +119,7 @@ class InstallationTests(unittest.TestCase):
             self.assertEqual(result.code, "updated")
             self.assertEqual(verify_update(update).code, "verified")
             self.assertEqual(apply_update(update).code, "already_updated")
-            state = parent / "state"
+            state = (parent / "state").resolve()
             generations = state / "manifests"
             self.assertTrue(
                 (generations / f"{install.manifest.manifest_sha256}.json").is_file()
@@ -214,7 +214,7 @@ class InstallationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             parent = Path(temporary)
             install, update = self._installed_update(parent)
-            state = parent / "state"
+            state = (parent / "state").resolve()
             previous_active = (state / "active.json").read_bytes()
             original_replace = __import__(
                 "byte_core.installation", fromlist=["_replace_file"]
