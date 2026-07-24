@@ -14,6 +14,17 @@ from dataclasses import asdict, dataclass
 from enum import IntEnum
 from typing import Sequence, TextIO
 
+from .care import (
+    CareError,
+    build_diagnostic_report,
+    prepare_local_report,
+    serialize_diagnostic_report,
+)
+from .care_github import (
+    CareTransportError,
+    plan_github_action,
+    submit_github_action,
+)
 from .lifecycle import (
     LifecycleError,
     apply_initialization,
@@ -25,9 +36,30 @@ from .lifecycle import (
 )
 from .installation import (
     InstallationError,
+    apply_installation,
+    apply_removal,
+    apply_update,
     build_install_plan,
     build_removal_plan,
+    build_update_plan,
+    load_install_plan,
+    load_removal_plan,
+    load_release_descriptor,
+    load_release_notes,
+    load_update_plan,
     serialize as serialize_installation_plan,
+    verify_installation,
+    verify_removal,
+    verify_update,
+)
+from .shell_integration import (
+    ShellIntegrationError,
+    apply_shell_plan,
+    build_shell_install_plan,
+    build_shell_removal_plan,
+    load_shell_plan,
+    serialize_shell_plan,
+    verify_shell_plan,
 )
 
 
@@ -54,6 +86,28 @@ class CheckReport:
     command: str
     supported: bool
     checks: tuple[CheckResult, ...]
+
+
+@dataclass(frozen=True)
+class UpdateCheckResult:
+    command: str
+    status: str
+    from_version: str
+    to_version: str
+    migration: str
+    release_notes_path: str
+    descriptor_sha256: str
+    plan_id: str
+    action_count: int
+
+
+SUPPORTED_HOSTS = frozenset(
+    {
+        ("linux", "x86_64", "ubuntu/24.04"),
+        ("macos", "arm64", "macos/15"),
+        ("macos", "arm64", "macos/26"),
+    }
+)
 
 
 class _ArgumentParser(argparse.ArgumentParser):
@@ -95,6 +149,9 @@ def build_parser() -> argparse.ArgumentParser:
     plan_remove = plan_operations.add_parser("remove")
     plan_remove.add_argument("--manifest", required=True)
     plan_remove.add_argument("--preserve-root", action="append", default=[])
+    plan_update = plan_operations.add_parser("update")
+    plan_update.add_argument("--manifest", required=True)
+    plan_update.add_argument("--artifact-root", required=True)
 
     for name in ("apply", "verify"):
         command = commands.add_parser(name, help=f"{name} an exact plan")
@@ -105,26 +162,95 @@ def build_parser() -> argparse.ArgumentParser:
     )
     remove.add_argument("--deployment-root", required=True)
     remove.add_argument("--format", choices=("text", "json"), default="text")
-    for name in ("update", "doctor"):
-        commands.add_parser(name, help="reserved; not implemented")
+    update = commands.add_parser(
+        "update", help="inspect, plan, or apply a local Core update"
+    )
+    update_mode = update.add_mutually_exclusive_group(required=True)
+    update_mode.add_argument("--check", action="store_true")
+    update_mode.add_argument("--plan", action="store_true")
+    update_mode.add_argument("--apply", metavar="PLAN_FILE")
+    update.add_argument("--manifest")
+    update.add_argument("--artifact-root")
+    update.add_argument("--format", choices=("text", "json"), default="text")
+    shell = commands.add_parser(
+        "shell", help="plan and manage optional Bash or Zsh integration"
+    )
+    shell_operations = shell.add_subparsers(dest="shell_operation", required=True)
+    shell_plan = shell_operations.add_parser("plan")
+    shell_plan.add_argument("--home-root", required=True)
+    shell_plan.add_argument("--shell", dest="shell_name", choices=("bash", "zsh"),
+                            required=True)
+    shell_plan.add_argument("--shell-script", required=True)
+    shell_plan.add_argument("--syntax-highlighting")
+    shell_plan_remove = shell_operations.add_parser("plan-remove")
+    shell_plan_remove.add_argument("--home-root", required=True)
+    shell_plan_remove.add_argument(
+        "--shell", dest="shell_name", choices=("bash", "zsh"), required=True
+    )
+    for name in ("apply", "verify", "remove"):
+        shell_action = shell_operations.add_parser(name)
+        shell_action.add_argument("--plan", required=True)
+        shell_action.add_argument(
+            "--format", choices=("text", "json"), default="text"
+        )
+    doctor = commands.add_parser(
+        "doctor", help="construct a minimal local Byte Care report"
+    )
+    doctor.add_argument(
+        "--mode",
+        required=True,
+        choices=(
+            "off", "local-only", "ask-before-reporting",
+            "automatic-sanitized",
+        ),
+    )
+    doctor.add_argument("--component", required=True)
+    doctor.add_argument("--phase", required=True)
+    doctor.add_argument("--error-code", required=True)
+    doctor.add_argument("--exit-code", required=True, type=int)
+    doctor.add_argument("--configuration-schema-version", type=int)
+    doctor.add_argument("--report-root")
+    github_mode = doctor.add_mutually_exclusive_group()
+    github_mode.add_argument("--github-dry-run", action="store_true")
+    github_mode.add_argument("--github-submit", action="store_true")
+    doctor.add_argument("--repository")
+    doctor.add_argument("--transport-root")
+    doctor.add_argument("--format", choices=("text", "json"), default="text")
     return parser
 
 
 def collect_check_report() -> CheckReport:
-    python_supported = sys.version_info >= (3, 11)
-    python_value = f"{sys.version_info.major}.{sys.version_info.minor}"
-
     system = platform.system()
-    normalized_system = {
-        "Darwin": "macos",
-        "Linux": "linux",
-    }.get(system, "unsupported")
-    platform_supported = normalized_system != "unsupported" and os.name == "posix"
+    return build_check_report(
+        system=system,
+        machine=platform.machine(),
+        posix=os.name == "posix",
+        python_version=(sys.version_info.major, sys.version_info.minor),
+        git_version=_git_version(),
+        host_release=_host_release(system),
+    )
 
-    machine = _safe_identifier(platform.machine())
-    architecture_identified = machine != "unknown"
 
-    git_version = _git_version()
+def build_check_report(
+    *,
+    system: str,
+    machine: str,
+    posix: bool,
+    python_version: tuple[int, int],
+    git_version: str | None,
+    host_release: str,
+) -> CheckReport:
+    python_supported = (3, 11) <= python_version <= (3, 14)
+    python_value = f"{python_version[0]}.{python_version[1]}"
+    normalized_system = _normalize_system(system)
+    normalized_machine = _normalize_machine(machine)
+    platform_supported = normalized_system != "unsupported" and posix
+    architecture_identified = normalized_machine != "unknown"
+    host_supported = (
+        platform_supported
+        and architecture_identified
+        and (normalized_system, normalized_machine, host_release) in SUPPORTED_HOSTS
+    )
     git_supported = git_version is not None
 
     checks = (
@@ -141,7 +267,12 @@ def collect_check_report() -> CheckReport:
         CheckResult(
             "architecture",
             "pass" if architecture_identified else "fail",
-            machine,
+            normalized_machine,
+        ),
+        CheckResult(
+            "host",
+            "pass" if host_supported else "fail",
+            f"{normalized_system}/{normalized_machine}/{host_release}",
         ),
         CheckResult(
             "git",
@@ -154,6 +285,36 @@ def collect_check_report() -> CheckReport:
         supported=all(check.status == "pass" for check in checks),
         checks=checks,
     )
+
+
+def _normalize_system(value: str) -> str:
+    return {"Darwin": "macos", "Linux": "linux"}.get(value, "unsupported")
+
+
+def _normalize_machine(value: str) -> str:
+    machine = _safe_identifier(value)
+    return {
+        "aarch64": "arm64",
+        "amd64": "x86_64",
+        "x64": "x86_64",
+    }.get(machine, machine)
+
+
+def _host_release(system: str) -> str:
+    if system == "Darwin":
+        version = _safe_identifier(platform.mac_ver()[0].partition(".")[0])
+        return "unknown" if version == "unknown" else f"macos/{version}"
+    if system == "Linux":
+        try:
+            release = platform.freedesktop_os_release()
+        except OSError:
+            return "unknown"
+        identifier = _safe_identifier(release.get("ID", ""))
+        version = _safe_identifier(release.get("VERSION_ID", ""))
+        if identifier == "unknown" or version == "unknown":
+            return "unknown"
+        return f"{identifier}/{version}"
+    return "unknown"
 
 
 def main(
@@ -181,25 +342,71 @@ def main(
                     arguments.state_root, arguments.core_version,
                 )
                 output.write(serialize_installation_plan(installation_plan))
-            else:
+            elif arguments.operation == "remove":
                 removal_plan = build_removal_plan(
                     arguments.manifest,
                     preserve_roots=tuple(arguments.preserve_root),
                 )
                 output.write(serialize_installation_plan(removal_plan))
+            else:
+                update_plan = build_update_plan(
+                    arguments.manifest,
+                    arguments.artifact_root,
+                )
+                output.write(serialize_installation_plan(update_plan))
             return ExitStatus.SUCCESS
         if arguments.command == "apply":
             readiness = collect_check_report()
             if not readiness.supported:
                 output.write(_format_text(readiness))
                 return ExitStatus.UNSUPPORTED
-            active_plan = load_plan(arguments.plan)
-            result = apply_initialization(active_plan)
+            try:
+                active_plan = load_plan(arguments.plan)
+                result = apply_initialization(active_plan)
+            except LifecycleError as error:
+                if error.code not in {"invalid_plan", "unsupported_plan"}:
+                    raise
+                try:
+                    active_plan = load_install_plan(arguments.plan)
+                    result = apply_installation(active_plan)
+                except InstallationError as install_error:
+                    if install_error.code not in {"invalid_plan", "unsupported_plan"}:
+                        raise
+                    try:
+                        active_plan = load_update_plan(arguments.plan)
+                        result = apply_update(active_plan)
+                    except InstallationError as update_error:
+                        if update_error.code not in {
+                            "invalid_plan", "unsupported_plan"
+                        }:
+                            raise
+                        active_plan = load_removal_plan(arguments.plan)
+                        result = apply_removal(active_plan)
             output.write(_format_lifecycle_result(result, arguments.format))
             return ExitStatus.SUCCESS
         if arguments.command == "verify":
-            active_plan = load_plan(arguments.plan)
-            result = verify_initialization(active_plan)
+            try:
+                active_plan = load_plan(arguments.plan)
+                result = verify_initialization(active_plan)
+            except LifecycleError as error:
+                if error.code not in {"invalid_plan", "unsupported_plan"}:
+                    raise
+                try:
+                    active_plan = load_install_plan(arguments.plan)
+                    result = verify_installation(active_plan)
+                except InstallationError as install_error:
+                    if install_error.code not in {"invalid_plan", "unsupported_plan"}:
+                        raise
+                    try:
+                        active_plan = load_update_plan(arguments.plan)
+                        result = verify_update(active_plan)
+                    except InstallationError as update_error:
+                        if update_error.code not in {
+                            "invalid_plan", "unsupported_plan"
+                        }:
+                            raise
+                        active_plan = load_removal_plan(arguments.plan)
+                        result = verify_removal(active_plan)
             output.write(_format_lifecycle_result(result, arguments.format))
             return ExitStatus.SUCCESS
         if arguments.command == "init":
@@ -225,9 +432,162 @@ def main(
             result = remove_core_integration(arguments.deployment_root)
             output.write(_format_lifecycle_result(result, arguments.format))
             return ExitStatus.SUCCESS
-        if arguments.command != "check":
-            errors.write("byte: command is not implemented\n")
-            return ExitStatus.UNSUPPORTED
+        if arguments.command == "update":
+            if arguments.apply is None:
+                if arguments.manifest is None or arguments.artifact_root is None:
+                    parser.error(
+                        "--check and --plan require --manifest and --artifact-root"
+                    )
+                active_plan = build_update_plan(
+                    arguments.manifest, arguments.artifact_root
+                )
+                descriptor = load_release_descriptor(
+                    os.path.join(active_plan.artifact_root, "release.json")
+                )
+                if arguments.plan:
+                    output.write(serialize_installation_plan(active_plan))
+                    return ExitStatus.SUCCESS
+                result = _make_update_check_result(active_plan, descriptor)
+                output.write(
+                    _format_update_check(result, arguments.format)
+                )
+                return ExitStatus.SUCCESS
+            if arguments.manifest is not None or arguments.artifact_root is not None:
+                parser.error("--apply accepts only an exact plan file")
+            if arguments.format != "text":
+                parser.error("--apply uses an interactive text preview")
+            readiness = collect_check_report()
+            if not readiness.supported:
+                output.write(_format_text(readiness))
+                return ExitStatus.UNSUPPORTED
+            active_plan = load_update_plan(arguments.apply)
+            candidate = build_update_plan(
+                active_plan.manifest_path, active_plan.artifact_root
+            )
+            if candidate != active_plan:
+                raise InstallationError("plan_stale")
+            descriptor, release_notes = load_release_notes(
+                active_plan.artifact_root,
+                active_plan.release_descriptor_sha256,
+            )
+            output.write(
+                _format_update_preview(active_plan, descriptor, release_notes)
+            )
+            output.write("Type the full plan ID to apply: ")
+            output.flush()
+            if input_stream.readline().strip() != active_plan.plan_id:
+                errors.write("byte: update cancelled\n")
+                return ExitStatus.REFUSED
+            result = apply_update(active_plan)
+            verify_update(active_plan)
+            output.write(_format_lifecycle_result(result, arguments.format))
+            return ExitStatus.SUCCESS
+        if arguments.command == "shell":
+            if arguments.shell_operation == "plan":
+                active_plan = build_shell_install_plan(
+                    arguments.home_root,
+                    arguments.shell_name,
+                    arguments.shell_script,
+                    arguments.syntax_highlighting,
+                )
+                output.write(serialize_shell_plan(active_plan))
+                return ExitStatus.SUCCESS
+            if arguments.shell_operation == "plan-remove":
+                active_plan = build_shell_removal_plan(
+                    arguments.home_root, arguments.shell_name
+                )
+                output.write(serialize_shell_plan(active_plan))
+                return ExitStatus.SUCCESS
+            active_plan = load_shell_plan(arguments.plan)
+            if arguments.shell_operation == "verify":
+                result = verify_shell_plan(active_plan)
+            else:
+                readiness = collect_check_report()
+                if not readiness.supported:
+                    output.write(_format_text(readiness))
+                    return ExitStatus.UNSUPPORTED
+                result = apply_shell_plan(active_plan)
+            output.write(_format_lifecycle_result(result, arguments.format))
+            return ExitStatus.SUCCESS
+        if arguments.command == "doctor":
+            if (
+                (arguments.github_dry_run or arguments.github_submit)
+                and arguments.mode == "off"
+            ):
+                parser.error("reporting mode off forbids GitHub transport")
+            report = build_diagnostic_report(
+                component=arguments.component,
+                phase=arguments.phase,
+                error_code=arguments.error_code,
+                exit_code=arguments.exit_code,
+                platform=_normalize_system(platform.system()),
+                architecture=_normalize_machine(platform.machine()),
+                python_version=(
+                    f"{sys.version_info.major}.{sys.version_info.minor}"
+                ),
+                configuration_schema_version=(
+                    arguments.configuration_schema_version
+                ),
+            )
+            approved = False
+            result = prepare_local_report(
+                report,
+                mode=arguments.mode,
+                report_root=arguments.report_root,
+                approved=False,
+            )
+            if result.code == "approval_required":
+                output.write("Byte Care exact local report\n")
+                output.write(serialize_diagnostic_report(report))
+                output.write(
+                    f"Destination: {arguments.report_root}\n"
+                    f"Type fingerprint {report.fingerprint} to save locally: "
+                )
+                output.flush()
+                approved = input_stream.readline().strip() == report.fingerprint
+                if not approved:
+                    errors.write("byte: diagnostic report cancelled\n")
+                    return ExitStatus.REFUSED
+                result = prepare_local_report(
+                    report,
+                    mode=arguments.mode,
+                    report_root=arguments.report_root,
+                    approved=True,
+                )
+            output.write(_format_care_result(result, arguments.format))
+            if arguments.github_dry_run or arguments.github_submit:
+                if arguments.format != "text":
+                    parser.error("GitHub transport uses exact text review")
+                if arguments.repository is None:
+                    parser.error("GitHub transport requires --repository")
+                if arguments.github_submit and arguments.transport_root is None:
+                    parser.error("--github-submit requires --transport-root")
+                action = plan_github_action(
+                    report, repository=arguments.repository
+                )
+                output.write(_format_github_action(action))
+                if arguments.github_dry_run:
+                    output.write("GitHub action: dry-run only\n")
+                    return ExitStatus.SUCCESS
+                output.write(
+                    f"Type fingerprint {report.fingerprint} to submit: "
+                )
+                output.flush()
+                approval = input_stream.readline().strip()
+                if approval != report.fingerprint:
+                    errors.write("byte: GitHub report cancelled\n")
+                    return ExitStatus.REFUSED
+                transport = submit_github_action(
+                    action,
+                    approval_fingerprint=approval,
+                    transport_root=arguments.transport_root,
+                )
+                output.write(
+                    f"GitHub result: {transport.code}\n"
+                    f"Action: {transport.action}\n"
+                    f"Issue: {transport.issue_number}\n"
+                )
+            return ExitStatus.SUCCESS
 
         report = collect_check_report()
         if arguments.format == "json":
@@ -241,6 +601,24 @@ def main(
         )
     except InstallationError as error:
         errors.write(f"byte: {error.code}\n")
+        if error.code == "recovery_required":
+            if active_plan is not None:
+                errors.write(
+                    "byte: preserve the Core and state roots; inspect the "
+                    f"operation journal for plan {active_plan.plan_id}\n"
+                )
+            return ExitStatus.RECOVERY_REQUIRED
+        if error.code == "verification_failed":
+            return ExitStatus.VERIFICATION_FAILED
+        if error.code in {
+            "target_exists", "root_link_forbidden", "artifact_link_forbidden",
+            "managed_file_modified", "managed_file_missing",
+            "managed_path_link_forbidden", "managed_paths_changed",
+            "active_mismatch", "plan_stale",
+        }:
+            return ExitStatus.REFUSED
+        if error.code == "apply_failed":
+            return ExitStatus.INTERNAL_ERROR
         return ExitStatus.INVALID_INPUT
     except LifecycleError as error:
         errors.write(f"byte: {error.code}\n")
@@ -260,6 +638,51 @@ def main(
             return ExitStatus.REFUSED
         if error.code == "apply_failed":
             return ExitStatus.INTERNAL_ERROR
+        return ExitStatus.INVALID_INPUT
+    except ShellIntegrationError as error:
+        errors.write(f"byte: {error.code}\n")
+        if error.code == "recovery_required":
+            if active_plan is not None:
+                errors.write(
+                    "byte: preserve the shell profile and exact backup for "
+                    f"plan {active_plan.plan_id}\n"
+                )
+            return ExitStatus.RECOVERY_REQUIRED
+        if error.code == "verification_failed":
+            return ExitStatus.VERIFICATION_FAILED
+        if error.code in {
+            "profile_changed", "managed_block_conflict",
+            "malformed_managed_block", "managed_block_mismatch",
+            "backup_exists", "backup_directory_invalid",
+        }:
+            return ExitStatus.REFUSED
+        if error.code == "apply_failed":
+            return ExitStatus.INTERNAL_ERROR
+        return ExitStatus.INVALID_INPUT
+    except CareError as error:
+        errors.write(f"byte: {error.code}\n")
+        if error.code in {
+            "privacy_scan_failed", "report_collision",
+            "report_target_invalid",
+        }:
+            return ExitStatus.REFUSED
+        if error.code in {
+            "report_write_failed", "report_verification_failed",
+        }:
+            return ExitStatus.INTERNAL_ERROR
+        return ExitStatus.INVALID_INPUT
+    except CareTransportError as error:
+        errors.write(f"byte: {error.code}\n")
+        if error.code in {
+            "submission_not_approved", "submission_rate_limited",
+            "action_stale", "duplicate_issue_ambiguous",
+            "repository_not_official",
+        }:
+            return ExitStatus.REFUSED
+        if error.code in {
+            "github_submission_failed", "transport_write_failed",
+        }:
+            return ExitStatus.RECOVERY_REQUIRED
         return ExitStatus.INVALID_INPUT
     except SystemExit:
         raise
@@ -323,6 +746,85 @@ def _format_lifecycle_result(result, output_format: str) -> str:
     if output_format == "json":
         return json.dumps(asdict(result), sort_keys=True) + "\n"
     return f"Result: {result.code}\nPlan ID: {result.plan_id}\n"
+
+
+def _format_care_result(result, output_format: str) -> str:
+    if output_format == "json":
+        return json.dumps(asdict(result), sort_keys=True) + "\n"
+    return (
+        f"Result: {result.code}\n"
+        f"Mode: {result.mode}\n"
+        f"Fingerprint: {result.fingerprint}\n"
+    )
+
+
+def _format_github_action(action) -> str:
+    destination = (
+        "new issue"
+        if action.issue_number is None
+        else f"issue #{action.issue_number}"
+    )
+    return (
+        "Byte Care exact GitHub action\n"
+        f"Repository: {action.repository}\n"
+        f"Action: {action.action}\n"
+        f"Destination: {destination}\n"
+        f"Label: {action.label}\n"
+        f"Title: {action.title}\n"
+        "Markdown:\n"
+        f"{action.markdown}"
+    )
+
+
+def _make_update_check_result(plan, descriptor) -> UpdateCheckResult:
+    return UpdateCheckResult(
+        command="update-check",
+        status="eligible",
+        from_version=plan.from_version,
+        to_version=plan.to_version,
+        migration=descriptor.migration,
+        release_notes_path=descriptor.release_notes_path,
+        descriptor_sha256=descriptor.descriptor_sha256,
+        plan_id=plan.plan_id,
+        action_count=len(plan.actions),
+    )
+
+
+def _format_update_check(
+    result: UpdateCheckResult, output_format: str
+) -> str:
+    if output_format == "json":
+        return json.dumps(asdict(result), sort_keys=True) + "\n"
+    return "\n".join(
+        (
+            "Byte update check",
+            f"Status: {result.status}",
+            f"Current version: {result.from_version}",
+            f"Next version: {result.to_version}",
+            f"Migration: {result.migration}",
+            f"Release notes: {result.release_notes_path}",
+            f"Managed file actions: {result.action_count}",
+            f"Plan ID: {result.plan_id}",
+        )
+    ) + "\n"
+
+
+def _format_update_preview(plan, descriptor, release_notes: str) -> str:
+    lines = [
+        "Byte update plan",
+        f"Current version: {plan.from_version}",
+        f"Next version: {plan.to_version}",
+        f"Migration: {descriptor.migration}",
+        f"Release notes ({descriptor.release_notes_path}):",
+        *(f"  {line}" for line in release_notes.splitlines()),
+        f"Plan ID: {plan.plan_id}",
+        "Create:",
+    ]
+    lines.extend(f"  - {action.target}" for action in plan.actions)
+    lines.append(
+        f"Preserve backout release: {plan.backout_release_relative_path}"
+    )
+    return "\n".join(lines) + "\n"
 
 
 if __name__ == "__main__":

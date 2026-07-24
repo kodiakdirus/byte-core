@@ -2,7 +2,7 @@
 
 Byte Core uses one `byte` command for lifecycle operations. The command separates checking, planning, applying, verifying, and backing out changes so that read-only discovery cannot silently become mutation.
 
-The current bootstrap implements `check` and the initial deployment lifecycle (`init`, `plan init`, `apply`, and `verify`). Update, removal, and diagnostics remain reserved design commitments, not functional capabilities.
+The current bootstrap implements `check`, the initial deployment lifecycle, and experimental exact-plan installation and update apply and verification proofs. Destructive removal, the top-level update workflow, and diagnostics remain reserved design commitments, not functional capabilities.
 
 ## Grammar
 
@@ -12,14 +12,20 @@ byte check [--format text|json]
 byte init --deployment-root ABSOLUTE_PATH
 byte plan init --deployment-root ABSOLUTE_PATH
 byte plan install --artifact-root ABSOLUTE_PATH --core-root ABSOLUTE_PATH --state-root ABSOLUTE_PATH --core-version VERSION
+byte plan update --manifest ABSOLUTE_PATH --artifact-root ABSOLUTE_PATH
 byte plan remove --manifest ABSOLUTE_PATH [--preserve-root ABSOLUTE_PATH]
 byte apply --plan PLAN.json [--format text|json]
 byte verify --plan PLAN.json [--format text|json]
+byte update --check --manifest ABSOLUTE_PATH --artifact-root ABSOLUTE_PATH [--format text|json]
+byte update --plan --manifest ABSOLUTE_PATH --artifact-root ABSOLUTE_PATH
+byte update --apply PLAN.json
+byte shell plan --home-root ABSOLUTE_PATH --shell bash|zsh --shell-script ABSOLUTE_PATH [--syntax-highlighting ABSOLUTE_PATH]
+byte shell apply --plan PLAN.json [--format text|json]
+byte shell verify --plan PLAN.json [--format text|json]
+byte shell plan-remove --home-root ABSOLUTE_PATH --shell bash|zsh
+byte shell remove --plan PLAN.json [--format text|json]
+byte doctor --mode off|local-only|ask-before-reporting|automatic-sanitized --component COMPONENT --phase PHASE --error-code CODE --exit-code STATUS [--configuration-schema-version VERSION] [--report-root ABSOLUTE_PATH] [--github-dry-run|--github-submit] [--repository kodiakdirus/byte-core] [--transport-root ABSOLUTE_PATH] [--format text|json]
 byte remove --deployment-root ABSOLUTE_PATH [--format text|json]
-
-# Reserved; not implemented
-byte update
-byte doctor
 ```
 
 Unknown commands and unsupported options are usage errors. A reserved command must fail clearly; it must not perform a partial or substitute operation.
@@ -49,10 +55,11 @@ Output must not include credentials, environment-variable contents, usernames, h
 
 `byte check` is read-only environment discovery. It checks:
 
-- Python is version 3.11 or newer;
+- Python is within the currently tested 3.11 through 3.14 range;
 - the operating system is macOS or Linux;
 - the process environment is POSIX-compatible;
-- the machine architecture can be identified without declaring unapproved architecture support; and
+- the machine architecture can be normalized;
+- the complete host is an approved v0.1 target (macOS 15 or 26 on `arm64`, or Ubuntu 24.04 on `linux/x86_64`); and
 - Git is available and reports a parseable version.
 
 The command does not:
@@ -67,6 +74,10 @@ The command does not:
 - claim that installation, initialization, updates, or removal are available.
 
 A supported check returns status 0. A recognized but currently unsupported environment returns status 3 with every check result still shown. An unexpected internal failure returns status 70 with a sanitized error.
+
+The [v0.1 support matrix](support-matrix.md) records the exact operating-system, architecture, runtime, shell, automated-evidence, and manual-evidence boundary. A recognized operating system is not sufficient by itself to claim host support.
+
+Zsh and shell enhancements are optional on Linux and are not environment-check prerequisites. Byte does not install a shell or modify shell profiles as part of `check`, installation, or initialization.
 
 ## Initialization lifecycle
 
@@ -86,25 +97,60 @@ Plan files contain exact local target paths and are private local artifacts. The
 
 ## Removal boundary
 
-The current bootstrap has no installed Core integration: initialization creates only deployment-owned configuration and canonical documents. Accordingly, `byte remove` currently performs a read-only preservation check. It validates the explicit deployment root, configuration schema, and canonical documents; removes nothing; and reports `core_integration_absent`.
+Deployment initialization creates only deployment-owned configuration and canonical documents. Accordingly, `byte remove --deployment-root` performs a read-only preservation check for that deployment boundary. It validates the explicit deployment root, configuration schema, and canonical documents; removes nothing; and reports `core_integration_absent`.
 
-Configuration, canonical documents, operator-added files, and unrelated content remain byte-for-byte unchanged. Missing, symbolic-link, malformed, or ambiguous deployment roots are refused. Future installation work must extend removal through an exact reviewed plan and a Core-owned installation manifest before any deletion is authorized.
+Configuration, canonical documents, operator-added files, and unrelated content remain byte-for-byte unchanged. Missing, symbolic-link, malformed, or ambiguous deployment roots are refused. Installed Core files are removed only through `byte plan remove` followed by `byte apply`.
 
-## Installation manifest planning
+## Installation lifecycle
 
-`byte plan install` and `byte plan remove` are read-only architecture proofs. They do not install or delete anything.
+`byte plan install` and `byte plan remove` are read-only. Their output can be passed unchanged to `byte apply` and `byte verify`.
 
 An install plan inventories a complete, bounded artifact tree; records each relative path, SHA-256 digest, and executable/non-executable mode; targets an immutable `releases/VERSION` directory; and embeds a checksummed installation manifest. Core and state roots are explicit, absolute, non-overlapping paths.
 
-The manifest owns only Core release files and Byte-generated state. It records the manifest schema, Core version, active state, logical roots, release path, artifact digest, managed files, and directories that may be removed only when empty. It must not contain deployment configuration, canonical documents, credentials, inventory, or copied deployment truth.
+The manifest owns only Core release files and Byte-generated state. It records the manifest schema, Core version, active state, logical roots, release path, artifact digest, managed files, generated state paths, and directories that may be removed only when empty. It must not contain deployment configuration, canonical documents, credentials, inventory, or copied deployment truth.
 
-A removal plan accepts only an active, integrity-valid manifest. It re-reads every managed file and refuses missing, modified, mode-changed, symbolic-link, or escaped targets. Its removal list comes exclusively from the manifest. Explicit preservation roots must not overlap Core-owned paths and are recorded as postconditions.
+Install apply reloads and validates the bounded plan, re-scans the artifact, creates absent Core and state roots exclusively, verifies the immutable release, publishes an immutable manifest generation and compatibility copy, and atomically publishes checksummed `active.json` last. A journal supports conservative pre-activation cleanup. Ambiguous cleanup or any post-activation failure returns recovery-required and preserves state for inspection.
 
-Plan output contains exact local paths and is a private local artifact. This slice does not implement install/remove apply behavior, artifact signing, operating-system defaults, privilege escalation, or release provenance.
+Install verification requires the exact manifest, activation metadata, release paths, hashes, and modes. Exact apply replay reports `already_installed`; conflicting existing roots are refused.
 
-## Reserved lifecycle behavior
+A removal plan accepts only an active, integrity-valid compatibility manifest and its complete immutable manifest store. It re-reads every managed release and refuses missing, modified, mode-changed, symbolic-link, escaped, or unowned targets. Its removal list comes exclusively from those manifests. Explicit preservation roots must exist, must not overlap Core-owned paths, and are recorded as postconditions.
 
-- `update` will use the versioned update and rollback contract.
-- `doctor` will construct minimal local diagnostics under the privacy contract.
+Removal apply reloads the exact plan, rebuilds it from the still-active installation, and refuses any difference before mutation. It removes the activation marker first, then only listed files and empty directories. Exact replay succeeds only when every planned target is absent and every preservation root still exists. An interrupted removal returns `recovery_required` and refuses silent partial replay; the reviewed plan is the recovery record.
+
+Plan output contains exact local paths and is a private local artifact. This slice does not implement artifact signing, operating-system defaults, privilege escalation, or release provenance.
+
+## Experimental update lifecycle
+
+`byte plan update` is read-only. It requires a fully verified active installation and a local artifact containing a valid `release.json`. The descriptor—not a caller-supplied version—binds the strictly newer Core version, supported configuration-schema range, explicit migration status, release-notes path, complete file inventory, artifact checksum, and descriptor checksum. The planner inventories those files into a fresh immutable release target and records the descriptor checksum, exact manifest, and activation transition. The existing release is preserved as the backout target. Dirty Core files, altered activation state, missing or changed release content, incompatible schemas, undeclared migrations, existing target releases, same-version replacement, and downgrade requests are refused.
+
+The planner never reads or writes deployment-owned content. An exact update plan may be passed to `byte apply` and `byte verify`. Apply re-verifies both artifacts, creates and verifies the new release, preserves checksum-addressed current and next manifests, re-verifies the backout release, and atomically replaces `active.json` as the commit point. `installation.json` is only a compatibility copy.
+
+Before activation, failure cleanup removes only unchanged paths created by the invocation. After activation, Byte restores the prior activation only when the attempted activation is unchanged and the prior immutable manifest and release still verify; it preserves the new release. Any ambiguity returns recovery-required with the operation journal intact.
+
+The experimental top-level workflow composes these primitives:
+
+- `byte update --check` emits a deterministic eligibility summary without mutation.
+- `byte update --plan` emits the exact JSON plan without mutation.
+- `byte update --apply PLAN.json` revalidates the current installation and local artifact against that exact plan, displays the checksummed release notes and every target, and mutates only after the operator types the full plan ID. Unsupported hosts are refused before the plan is loaded or a confirmation is requested.
+
+Interactive apply uses text output so its preview and confirmation prompt cannot be confused with machine-readable JSON. Cancellation performs no mutation. Generic `byte apply --plan` remains the non-guided exact-plan engine.
+
+The descriptor and artifact checksums detect mismatch and accidental modification; they do not authenticate publisher identity. This proof does not migrate configuration, fetch releases, verify signatures or tag provenance, garbage-collect releases, or provide automatic update selection. It is not a supported installed command-line interface.
+
+## Optional shell lifecycle
+
+The `byte shell` namespace applies the same separation to Bash and Zsh profile integration. `plan` and `plan-remove` are read-only and emit exact private-local JSON plans. `apply`, `verify`, and `remove` load those plans without guessing a home directory or profile.
+
+Apply and remove preserve unrelated profile content, use distinct recoverable backups, retain the original profile mode, and refuse changes made after planning. Exact replay is idempotent. A malformed, duplicate, stale, missing, or linked managed block is refused.
+
+Zsh syntax highlighting is included only when the operator supplies `--syntax-highlighting` during planning. Byte does not require Zsh on Linux, install packages, modify the login shell, or add syntax highlighting implicitly. The full boundary is documented in the [shell-integration contract](shell-integration.md).
+
+## Byte Care diagnostics
+
+`byte doctor` constructs a fixed-schema report from explicit Byte-owned error fields and normalized runtime identifiers. It never collects arbitrary logs, environment variables, configuration values, inventory, prompts, transcripts, paths, or command output.
+
+Every invocation requires an explicit mode. `off` writes nothing. `local-only` privacy-scans and stores the report under an explicit private-local root. `ask-before-reporting` displays the exact JSON and destination and requires the full stable fingerprint before local storage. `automatic-sanitized` is refused because automatic outbound reporting is unsupported.
+
+Local doctor modes do not access the network. `--github-dry-run` uses the user's authenticated `gh` session to search the official repository and display the exact deduplicated create/comment action without mutation. `--github-submit` additionally requires the full fingerprint, preserves the exact Markdown locally, rate-limits retries, and then asks `gh` to perform that reviewed action. GitHub authorizes the user's own account; Byte ships no token. No mode deploys a fix. See the [Byte Care contract](byte-care.md) for schema, storage, consent, transport, and hard-crash limitations.
 
 These reserved descriptions do not imply implementation.
