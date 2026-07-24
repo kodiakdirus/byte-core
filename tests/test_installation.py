@@ -246,7 +246,7 @@ class InstallationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             parent = Path(temporary)
             _, update = self._installed_update(parent)
-            state = parent / "state"
+            state = (parent / "state").resolve()
             original_replace = __import__(
                 "byte_core.installation", fromlist=["_replace_file"]
             )._replace_file
